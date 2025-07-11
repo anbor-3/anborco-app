@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  /* 通常表示用のセル */
+  .badge-cell        { @apply h-7 w-24 flex items-center justify-center text-xs font-bold leading-[1]; }
+  .badge-cell-status { @apply ml-1 rounded px-1 text-[10px] leading-[1]; }
+  .badge-cell-status-big {
+    /* 高さと最小幅を少し広げ、中央寄せ */
+    @apply ml-1 h-5 min-w-[18px] flex items-center justify-center rounded
+           text-xs font-bold leading-none bg-gray-300;
+  }
+  /* PDF キャプチャ時だけ適用するサイズ／余白調整 */
+  .pdf-export                { font-size: 10px; width: 100%; }
+  .pdf-export .badge-cell    { @apply h-8 w-28 text-sm; }
+  .pdf-export th,
+  .pdf-export td             { @apply p-[2px]; }
+  .pdf-export select         { @apply hidden; }    /* セレクトはキャプチャ時隠す */
+}
