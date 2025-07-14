@@ -1,7 +1,6 @@
-// vite.config.ts
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import path from 'path'; // ✅ これを追加！
+import path from 'path';
 import rollupNodePolyFill from 'rollup-plugin-polyfill-node';
 import { NodeGlobalsPolyfillPlugin } from '@esbuild-plugins/node-globals-polyfill';
 
@@ -27,8 +26,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, 'src'), // ✅ これで @ が使える
-      buffer: 'buffer/', // ✅ Buffer ポリフィル用
+      '@': path.resolve(__dirname, 'src'),
+      buffer: 'buffer/',
     },
   },
 });
