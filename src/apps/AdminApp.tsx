@@ -44,15 +44,15 @@ function AppLayout() {
             <div className="flex flex-col">
    {(() => {
      /* ログイン時に Login.tsx が保存した loggedInAdmin を読み込む */
-     const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
-     const company = admin.company ?? "会社未設定";
-     const name    = admin.name    ?? "名無し";
-     return (
-       <>
-         <span className="text-xs text-gray-300">{company}</span>
-         <span className="text-base font-semibold text-white">{name}</span>
-       </>
-     );
+     const user = JSON.parse(localStorage.getItem("currentUser") || "{}");
+const company = user.company ?? "会社未設定";
+const name    = user.name ?? "名無し";
+return (
+  <>
+    <span className="text-xs text-gray-300">{company}</span>
+    <span className="text-base font-semibold text-white">{name}</span>
+  </>
+);
    })()}
  </div>
           </div>
@@ -64,10 +64,9 @@ function AppLayout() {
   className="text-sm text-white bg-red-500 px-4 py-1 rounded hover:bg-red-600"
   onClick={() => {
     // 認証情報のみ削除（例：adminLogin や token）
-    localStorage.removeItem('adminLogin');
-
-    // ログイン画面へ遷移（正しいパスへ）
-    navigate('/'); // ← ここを '/admin/login' から修正！
+    localStorage.removeItem('loggedInAdmin');
+localStorage.removeItem('currentUser'); // ✅ 追加
+navigate('/'); // ← ここを '/admin/login' から修正！
   }}
 >
   ログアウト

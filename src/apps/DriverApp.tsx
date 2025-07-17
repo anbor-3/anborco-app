@@ -1,4 +1,3 @@
-import React from "react";
 import { Routes, Route, Link, useLocation } from "react-router-dom";
 import { FileText, Clock, User, Truck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -17,8 +16,9 @@ const App = () => {
   const navigate = useNavigate();
 
 const handleLogout = () => {
-  localStorage.removeItem("loggedInDriver"); // ログイン情報を削除（必要に応じて変更）
-  navigate("/login"); // ログイン画面にリダイレクト
+  localStorage.removeItem("loggedInDriver");
+  localStorage.removeItem("currentUser"); // ← 追加
+  navigate("/login");
 };
   return (
     <div className="flex flex-col min-h-screen bg-white">
@@ -29,13 +29,13 @@ const handleLogout = () => {
 
     {/* ここに名前バッジを移動（ロゴの右に並ぶ） */}
     <div className="px-2 py-1 rounded text-sm font-bold text-black bg-white border border-white">
-   {(() => {
-     const driver = JSON.parse(localStorage.getItem("loggedInDriver") || "{}");
-     const company = driver.company ?? "会社未設定";
-     const name    = driver.name    ?? "名無し";
-     return `${company}${name}`;
-   })()}
- </div>
+  {(() => {
+    const user = JSON.parse(localStorage.getItem("currentUser") || "{}");
+    const company = user.company ?? "会社未設定";
+    const name    = user.name ?? "名無し";
+    return `${company} / ${name}`;
+  })()}
+</div>
   </div>
 
   {/* ── 右側：ログアウトボタンのみ ───────────────── */}

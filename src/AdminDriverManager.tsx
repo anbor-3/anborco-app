@@ -30,6 +30,7 @@ shiftStart?: string; // シフト開始時間（例: "09:00"）
 shiftEnd?: string;   // シフト終了時間（例: "18:00"）
 statusUpdatedAt?: string;
 uid: string;
+password?: string;
 [key: string]: any;
 }
 
@@ -79,16 +80,29 @@ shiftEnd: "18:00",
 ];
 
 const AdminDriverManager = () => {
+  const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
+  const company = admin.company || "";
+  const storageKey = `driverList_${company}`;
   const [drivers, setDrivers] = useState<Driver[]>([]);
 
 useEffect(() => {
-  const saved = localStorage.getItem("driverList");
+  const saved = localStorage.getItem(storageKey);
   if (saved) {
-    setDrivers(JSON.parse(saved));
+    setDrivers(JSON.parse(saved)); // ✅ 自社データのみ
   } else {
-    setDrivers(initialDrivers);
+    // ✅ 初回データに company を付与
+    const updatedInitial = initialDrivers.map((d) => ({ ...d, company }));
+    setDrivers(updatedInitial);
+    localStorage.setItem(storageKey, JSON.stringify(updatedInitial));
+  }
+
+  // ✅ カスタムフィールド復元
+  const storedCustom = localStorage.getItem("driverCustomFields");
+  if (storedCustom) {
+    setCustomFields(JSON.parse(storedCustom));
   }
 }, []);
+
 const [notifications, setNotifications] = useState<Notification[]>([]);
   const addNotification = (message: string) => {
   const id = `${Date.now()}-${Math.random()}`;
@@ -185,7 +199,7 @@ useEffect(() => {
     const updated = [...drivers];
     updated.splice(index, 1);
     setDrivers(updated);
-    localStorage.setItem("driverList", JSON.stringify(updated));
+    localStorage.setItem(storageKey, JSON.stringify(updated));
   }
 };
 
@@ -193,20 +207,22 @@ useEffect(() => {
   const updated = [...drivers];
   (updated[index] as any)[field] = value;
   setDrivers(updated);
-  localStorage.setItem("driverList", JSON.stringify(updated));
+  localStorage.setItem(storageKey, JSON.stringify(updated));
 };
 
   const handleAddRow = () => {
+  const adminCompany = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}").company || "";
+
   const updated = [
     ...drivers,
     {
       id: `driver${drivers.length + 1}`,
-  uid: `uid${Date.now()}`,
+      uid: `uid${Date.now()}`,
       password: genRandom(8),
       name: "",
       contractType: "社員",
       invoiceNo: "",
-      company: "",
+      company: adminCompany, // ✅ 管理者と同じ会社を自動設定
       phone: "",
       address: "",
       mail: "",
@@ -216,17 +232,18 @@ useEffect(() => {
       attachments: [],
       hidden: false,
       status: "予定なし",
-isWorking: false,
-resting: false,
-shiftStart: "09:00",
-shiftEnd: "18:00",
+      isWorking: false,
+      resting: false,
+      shiftStart: "09:00",
+      shiftEnd: "18:00",
     },
   ];
   setDrivers(updated);
-  localStorage.setItem("driverList", JSON.stringify(updated));
+  localStorage.setItem(storageKey, JSON.stringify(updated));
   setEditingIndex(drivers.length);
   setExpandedRowIndex(drivers.length);
 };
+
 
 const handleFileUpload = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
   const files = e.target.files;
@@ -251,7 +268,7 @@ const handleFileUpload = (index: number, e: React.ChangeEvent<HTMLInputElement>)
     updated[index] = current;
 
     // ✅ この位置で保存
-    localStorage.setItem("driverList", JSON.stringify(updated));
+    localStorage.setItem(storageKey, JSON.stringify(updated));
 
     return updated;
   });
@@ -265,7 +282,7 @@ const handleFileUpload = (index: number, e: React.ChangeEvent<HTMLInputElement>)
     const updated = [...drivers];
     updated[rowIndex].attachments = updatedFiles;
     setDrivers(updated);
-    localStorage.setItem("driverList", JSON.stringify(updated));
+    localStorage.setItem(storageKey, JSON.stringify(updated));
   };
 const getStatusColor = (status: string) => {
   switch (status) {

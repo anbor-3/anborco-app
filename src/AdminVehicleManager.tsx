@@ -13,6 +13,7 @@ interface Vehicle {
   insuranceDate: string;
   voluntaryDate: string;
   attachments: File[];
+  company: string;
   customFields?: { [key: string]: string };
 }
 
@@ -28,6 +29,7 @@ const initialVehicles: Vehicle[] = [
     insuranceDate: "2024-11-30",
     voluntaryDate: "2024-10-31",
     attachments: [],
+    company: "",
   },
   {
     id: 2,
@@ -40,10 +42,14 @@ const initialVehicles: Vehicle[] = [
     insuranceDate: "2024-07-20",
     voluntaryDate: "2024-06-25",
     attachments: [],
+    company: "",
   },
 ];
 
 const VehicleManager = () => {
+  const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
+  const company = admin.company || "";
+  const storageKey = `vehicleList_${company}`;
   const [vehicles, setVehicles] = useState<Vehicle[]>(initialVehicles);
   const [editingId, setEditingId] = useState<number | null>(null);
 const [driverOptions, setDriverOptions] = useState<string[]>(initialDrivers);
@@ -55,20 +61,28 @@ const [vehicleCustomFields, setVehicleCustomFields] = useState<string[]>([]);
     setDriverOptions(JSON.parse(savedDrivers).map((d: any) => d.name));
   }
 
-  const saved = localStorage.getItem("vehicleList");
+  const saved = localStorage.getItem(storageKey);
   if (saved) {
     try {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed)) {
-        setVehicles(parsed);  // ✅ ここを追加
+        // ✅ 管理者の会社のみ残す
+        const filtered = parsed.filter((v: Vehicle) => v.company === company);
+        setVehicles(filtered);
       }
     } catch (e) {
       console.error("vehicleList の読み込みに失敗:", e);
     }
-    const savedCustom = localStorage.getItem("vehicleCustomFields");
-if (savedCustom) {
-  setVehicleCustomFields(JSON.parse(savedCustom));
-}
+  } else {
+    // ✅ ここを追加（初期データに company を付与）
+    const updatedInitial = initialVehicles.map((v) => ({ ...v, company }));
+    setVehicles(updatedInitial);
+    localStorage.setItem(storageKey, JSON.stringify(updatedInitial));
+  }
+
+  const savedCustom = localStorage.getItem("vehicleCustomFields");
+  if (savedCustom) {
+    setVehicleCustomFields(JSON.parse(savedCustom));
   }
 }, []);
 
@@ -85,7 +99,7 @@ if (savedCustom) {
       : vehicle
   );
   setVehicles(updated);
-  localStorage.setItem("vehicleList", JSON.stringify(updated)); // ✅ 保存追加
+  localStorage.setItem(storageKey, JSON.stringify(updated)); // ✅ 保存追加
 };
 const handleCustomFieldChange = (id: number, fieldName: string, value: string) => {
   const updated = vehicles.map((v) =>
@@ -100,19 +114,19 @@ const handleCustomFieldChange = (id: number, fieldName: string, value: string) =
       : v
   );
   setVehicles(updated);
-  localStorage.setItem("vehicleList", JSON.stringify(updated));
+  localStorage.setItem(storageKey, JSON.stringify(updated));
 };
 
   const handleSave = (id: number) => {
   setEditingId(null);
-  localStorage.setItem("vehicleList", JSON.stringify(vehicles)); // ✅ 保存追加
+  localStorage.setItem(storageKey, JSON.stringify(vehicles)); // ✅ 保存追加
 };
 
   const handleDelete = (id: number) => {
   if (window.confirm("本当に削除しますか？")) {
     const updated = vehicles.filter((v) => v.id !== id);
     setVehicles(updated);
-    localStorage.setItem("vehicleList", JSON.stringify(updated)); // ✅ 保存追加
+    localStorage.setItem(storageKey, JSON.stringify(updated)); // ✅ 保存追加
   }
 };
 
@@ -129,6 +143,7 @@ const handleCustomFieldChange = (id: number, fieldName: string, value: string) =
   insuranceDate: "",
   voluntaryDate: "",
   attachments: [],
+  company: company,
   customFields: vehicleCustomFields.reduce((acc, field) => {
     acc[field] = "";
     return acc;
@@ -138,7 +153,7 @@ const handleCustomFieldChange = (id: number, fieldName: string, value: string) =
   const updated = [...vehicles, newVehicle];
   setVehicles(updated);
   setEditingId(nextId);
-  localStorage.setItem("vehicleList", JSON.stringify(updated)); // ✅ 保存追加
+  localStorage.setItem(storageKey, JSON.stringify(updated)); // ✅ 保存追加
 };
 
   const openFile = (file: File) => {
@@ -147,18 +162,20 @@ const handleCustomFieldChange = (id: number, fieldName: string, value: string) =
   };
 
   const removeFile = (vehicleId: number, fileIndex: number) => {
-    if (!window.confirm("このファイルを削除しますか？")) return;
-    setVehicles((prev) =>
-      prev.map((vehicle) =>
-        vehicle.id === vehicleId
-          ? {
-              ...vehicle,
-              attachments: vehicle.attachments.filter((_, i) => i !== fileIndex),
-            }
-          : vehicle
-      )
-    );
-  };
+  if (!window.confirm("このファイルを削除しますか？")) return;
+
+  const updated = vehicles.map((vehicle) =>
+    vehicle.id === vehicleId
+      ? {
+          ...vehicle,
+          attachments: vehicle.attachments.filter((_, i) => i !== fileIndex),
+        }
+      : vehicle
+  );
+
+  setVehicles(updated);
+  localStorage.setItem(storageKey, JSON.stringify(updated)); // ✅ ここを追加
+};
 
   const inputStyle = "text-right px-2 py-1 border rounded w-full";
   const centerInput = "text-center px-2 py-1 border rounded w-full";

@@ -81,6 +81,15 @@ useEffect(() => {
       company: user.company,
     })
   );
+localStorage.setItem(
+  "currentUser",
+  JSON.stringify({
+    id: user.id,
+    name: user.name,
+    company: user.company,
+    role: selectedRole // ロールも保持
+  })
+);
 
   navigate(nextRoute); // ← 条件なしで通常遷移
 };

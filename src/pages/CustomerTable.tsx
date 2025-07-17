@@ -1,6 +1,16 @@
 import React, { useEffect, useState } from "react";
 import NewCustomerModal, { Customer } from "../pages/NewCustomerModal";
 import { createCustomerWithAuth } from "../utils/createCustomerWithAuth";
+import Select from "react-select";
+
+const pricingPlans = [
+  { id: "basic", name: "ベーシック", price: 9800, maxUsers: 10 },
+  { id: "advanced", name: "アドバンス", price: 19800, maxUsers: 30 },
+  { id: "pro", name: "プロ", price: 32000, maxUsers: 50 },
+  { id: "elite", name: "エリート", price: 42000, maxUsers: 70 },
+  { id: "premium", name: "プレミアム", price: 55000, maxUsers: 99 },
+  { id: "unlimited", name: "アンリミテッド", price: 60000, maxUsers: Infinity }
+];
 
 /* -------------------- 共通 -------------------- */
 const storageKey = "customerMaster";
@@ -8,12 +18,20 @@ const storageKey = "customerMaster";
 const getBadgeClass = (plan: string) => {
   const base = "inline-block px-2 py-1 text-xs font-bold rounded w-24 text-center";
   switch (plan) {
+    case "ベーシック":
+      return `${base} bg-amber-600 text-white`;
+    case "アドバンス":
+      return `${base} bg-green-600 text-white`;
     case "プロ":
-      return `${base} bg-sky-600 text-white`;
-    case "エンタープライズ":
-      return `${base} bg-rose-600 text-white`;
-    default: // ベーシック
-      return `${base} bg-amber-700 text-white`;
+      return `${base} bg-blue-600 text-white`;
+    case "エリート":
+      return `${base} bg-purple-600 text-white`;
+    case "プレミアム":
+      return `${base} bg-pink-600 text-white`;
+    case "アンリミテッド":
+      return `${base} bg-gradient-to-r from-yellow-400 via-yellow-500 to-yellow-600 text-black shadow-lg`;
+    default:
+      return `${base} bg-gray-600 text-white`;
   }
 };
 
@@ -29,27 +47,30 @@ export default function CustomerTable() {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   // ① まず型定義
-  type CustomerDraft = Omit<Customer, "id">;
+  type CustomerDraft = Omit<Customer, "id"> & {
+  selectedPlans: string[];
+};
 
   // ② 次に emptyDraft を定義
   const emptyDraft: CustomerDraft = {
-    company: "",
-    address: "",
-    representative: "",
-    contactPerson: "",
-    contactPhone: "",
-    plan: "ベーシック",
-    startDate: "",
-    endDate: "",
-    corporateNo: "",
-    invoiceNo: "",
-    paymentSite: "",
-    paymentMethod: "",
-    email: "",
-    uid: "",
-    upw: "",
-    note: ""
-  };
+  company: "",
+  address: "",
+  representative: "",
+  contactPerson: "",
+  contactPhone: "",
+  plan: "ベーシック", // 旧
+  selectedPlans: [],  // ✅ 追加
+  startDate: "",
+  endDate: "",
+  corporateNo: "",
+  invoiceNo: "",
+  paymentSite: "",
+  paymentMethod: "",
+  email: "",
+  uid: "",
+  upw: "",
+  note: ""
+};
 
   // ③ 最後に draft を useState に渡す
   const [draft, setDraft] = useState<CustomerDraft>(emptyDraft);
@@ -59,7 +80,15 @@ export default function CustomerTable() {
     setCustomers(list);
     localStorage.setItem(storageKey, JSON.stringify(list));
   };
+const getCurrentUserCount = (companyName: string) => {
+  const driverData = JSON.parse(localStorage.getItem("driverMaster") || "[]");
+  const adminData = JSON.parse(localStorage.getItem("adminMaster") || "[]");
 
+  const driverCount = driverData.filter((d: any) => d.company === companyName).length;
+  const adminCount = adminData.filter((a: any) => a.company === companyName).length;
+
+  return driverCount + adminCount; // ✅ 合計人数
+};
   /* JSX ---------------------------------------------------------- */
   return (
     <div className="p-4 overflow-x-auto font-sans">
@@ -74,10 +103,25 @@ export default function CustomerTable() {
       >
         新規登録
       </button>
+      
       <NewCustomerModal
   isOpen={showModal}
   onClose={() => setShowModal(false)}
   onSave={async (rec) => {
+    const currentUsers = getCurrentUserCount(rec.company);
+
+    let maxAllowed = 0;
+    rec.selectedPlans.forEach(planId => {
+      const plan = pricingPlans.find(p => p.id === planId);
+      if (plan && plan.maxUsers > maxAllowed) {
+        maxAllowed = plan.maxUsers;
+      }
+    });
+
+    if (currentUsers > maxAllowed) {
+      alert(`⚠ 現在の利用人数(${currentUsers}名)は、契約プランの上限(${maxAllowed}名)を超えています。\nアップグレードをご検討ください。`);
+      return;
+    }
     const { email, password } = await createCustomerWithAuth(rec.company, rec.contactPerson);
 
     const withAuth = {
@@ -90,11 +134,12 @@ export default function CustomerTable() {
     save([...customers, withAuth]);
 
     alert(
-  "✅ 担当者アカウントを作成しました\n" +
-  `ID: ${email}\n` +
-  `PW: ${password}`
-);
+      "✅ 担当者アカウントを作成しました\n" +
+      `ID: ${email}\n` +
+      `PW: ${password}`
+    );
   }}
+  pricingPlans={pricingPlans}  // ✅ ここに追加
 />
 
       {/* ----- 一覧テーブル（表示列は 8 項目） ----- */}
@@ -106,6 +151,7 @@ export default function CustomerTable() {
             <th className="border px-3 py-2">担当者</th>
             <th className="border px-3 py-2">TEL</th>
             <th className="border px-3 py-2">契約プラン</th>
+            <th className="border px-3 py-2">ユーザー数</th>
             <th className="border px-3 py-2">開始日</th>
             <th className="border px-3 py-2">満了日</th>
             <th className="border px-3 py-2">詳細</th>
@@ -134,8 +180,19 @@ export default function CustomerTable() {
                 <td className="border px-3 py-1">{c.contactPerson}</td>
                 <td className="border px-3 py-1">{c.contactPhone}</td>
                 <td className="border px-3 py-1">
-                  <span className={getBadgeClass(c.plan)}>{c.plan}</span>
-                </td>
+  <div className="flex flex-wrap gap-1 justify-center">
+    {c.selectedPlans?.map(planId => {
+      const plan = pricingPlans.find(p => p.id === planId);
+      return (
+        <span key={planId} className={getBadgeClass(plan?.name || "")}>
+          {plan?.name}
+        </span>
+      );
+    })}
+  </div>
+</td>
+<td className="border px-3 py-1">{getCurrentUserCount(c.company)}人</td>
+
                 <td className="border px-3 py-1">{c.startDate}</td>
                 <td className="border px-3 py-1">{c.endDate}</td>
                 <td className="border px-3 py-1">
@@ -151,7 +208,7 @@ export default function CustomerTable() {
               {/* -------- 詳細展開行 -------- */}
               {expanded === c.id && (
   <tr>
-    <td colSpan={8} className="bg-gray-50 border px-4 py-3">
+    <td colSpan={9} className="bg-gray-50 border px-4 py-3">
 
       {/* 編集モード */}
       {editingId === c.id ? (
@@ -171,16 +228,23 @@ export default function CustomerTable() {
   <label key={key} className="flex flex-col">
     <span className="font-bold">{label}</span>
     {key === "plan" ? (
-      // 契約プランは select
-      <select
-        className="border rounded px-1"
-        value={draft.plan}
-        onChange={e => setDraft({ ...draft, plan: e.target.value })}
-      >
-        <option value="ベーシック">ベーシック</option>
-        <option value="プロ">プロ</option>
-        <option value="エンタープライズ">エンタープライズ</option>
-      </select>
+  <Select
+    isMulti
+    className="text-sm"
+    options={pricingPlans.map(plan => ({
+      value: plan.id,
+      label: plan.name
+    }))}
+    value={(draft.selectedPlans || []).map(id => ({
+  value: id,
+  label: pricingPlans.find(p => p.id === id)?.name || ""
+}))}
+    onChange={(selected) => {
+      const values = selected.map((item) => item.value);
+      setDraft({ ...draft, selectedPlans: values });
+    }}
+  />
+
     ) : key === "startDate" || key === "endDate" ? (
       // 日付は date input
       <input
@@ -227,12 +291,12 @@ export default function CustomerTable() {
             <button
               className="px-4 py-1 bg-green-600 text-white rounded"
               onClick={() => {
-                const newList = customers.map(x =>
-                  x.id === c.id ? { ...x, ...draft } : x
-                );
-                save(newList);
-                setEditingId(null);
-              }}
+  const newList = customers.map(x =>
+    x.id === c.id ? { ...x, ...draft, selectedPlans: draft.selectedPlans } : x
+  );
+  save(newList);
+  setEditingId(null);
+}}
             >
               保存
             </button>
@@ -277,9 +341,12 @@ export default function CustomerTable() {
   className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full
              bg-blue-600 text-white shadow"
   onClick={() => {
-    setEditingId(c.id);
-    setDraft({ ...c });
-  }}
+  setEditingId(c.id);
+  setDraft({
+    ...c,
+    selectedPlans: c.selectedPlans || [] // ✅ null安全
+  });
+}}
 >
   編集
 </button>
