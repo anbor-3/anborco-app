@@ -1,7 +1,7 @@
 import { Link, Routes, Route, useNavigate, Navigate } from "react-router-dom";
 import CustomerTable from "../pages/CustomerTable";
 import MasterPasswordChange from "../pages/MasterPasswordChange";
-import React, { useRef } from "react";
+import  { useRef } from "react";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 
@@ -77,7 +77,7 @@ const setupPlans = [
 ];
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="responsive-container master-container flex flex-col h-screen">
       {/* 共通ヘッダー */}
       <header className="bg-green-100 flex items-center justify-between px-4 py-2 w-full">
         <img
@@ -164,7 +164,7 @@ const setupPlans = [
         </aside>
 
         {/* 🔄 ここだけルートに応じて切り替え */}
-        <main className="flex-1 bg-gray-100 p-6">
+        <main className="flex-1 bg-gray-100 p-6 overflow-y-auto overflow-x-auto">
           <Routes>
             <Route path="/" element={<Navigate to="/master/customers" replace />} />
             <Route path="/customers" element={<CustomerTable />} />

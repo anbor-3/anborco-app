@@ -1,20 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@layer utilities {
-  /* 通常表示用のセル */
-  .badge-cell        { @apply h-7 w-24 flex items-center justify-center text-xs font-bold leading-[1]; }
-  .badge-cell-status { @apply ml-1 rounded px-1 text-[10px] leading-[1]; }
-  .badge-cell-status-big {
-    /* 高さと最小幅を少し広げ、中央寄せ */
-    @apply ml-1 h-5 min-w-[18px] flex items-center justify-center rounded
-           text-xs font-bold leading-none bg-gray-300;
+@layer base {
+  html, body {
+    height: 100%;
   }
-  /* PDF キャプチャ時だけ適用するサイズ／余白調整 */
-  .pdf-export                { font-size: 10px; width: 100%; }
-  .pdf-export .badge-cell    { @apply h-8 w-28 text-sm; }
-  .pdf-export th,
-  .pdf-export td             { @apply p-[2px]; }
-  .pdf-export select         { @apply hidden; }    /* セレクトはキャプチャ時隠す */
+
+  * {
+    @apply m-0 p-0 box-border;
+  }
+
+  /* ✅ フォントサイズ固定 */
+  html {
+    font-size: 16px; /* どのPCでも固定 */
+  }
+
+  body {
+    font-family: 'Noto Sans JP', sans-serif;
+    @apply text-gray-800;
+    background-color: #f8f9fa;
+  }
+
+  /* ✅ アプリ全体の幅を完全固定（中央寄せ） */
+  .app-container {
+  width: 100%;           /* 画面幅に合わせる */
+  max-width: 1280px;     /* 最大1280px */
+  margin: 0 auto;
+  background-color: #fff;
+  padding: 0 16px;       /* 余白を確保 */
+}
+
+  /* ✅ 管理画面・ドライバー画面・マスター画面のメイン幅を固定 */
+.main-fixed {
+  width: 100%;
+  max-width: calc(1280px - 240px); /* サイドバー込みでもOK */
+  margin: 0 auto;
+  min-height: calc(100vh - 64px);
+}
+
+  /* ✅ ログインページ */
+  .login-container {
+    @apply w-full h-screen flex justify-center items-center;
+    background-color: #e2e8f0;
+  }
+
+  /* ✅ ログインボックス（固定サイズ） */
+  .login-box {
+    @apply bg-white shadow-lg rounded-xl p-10;
+    width: 400px; /* ✅ 固定幅 */
+  }
+}
+
+@layer utilities {
+  /* ✅ テーブルは固定サイズでレイアウト */
+  .table-fixed {
+    table-layout: fixed;
+    width: 100%;
+    font-size: 14px; /* ✅ 固定 */
+  }
+
+  .table-fixed th,
+  .table-fixed td {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }

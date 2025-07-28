@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import  { useState, useEffect } from "react";
 
 type Project = {
   id: number;
@@ -61,7 +61,7 @@ const initialProjects: Project[] = [
     name: "渋谷スポット便",
     contractStart: "2024-05-01",
     contractEnd: "2024-08-01",
-    reward: "920000",
+    unitPrice: 920000,
     startTime: "07:00",
     endTime: "16:00",
     paymentDate: "月末",
@@ -77,7 +77,7 @@ const initialProjects: Project[] = [
     name: "大田区配送",
     contractStart: "2024-07-15",
     contractEnd: "2024-10-15",
-    reward: "600000",
+    unitPrice: 600000,
     startTime: "10:00",
     endTime: "19:00",
     paymentDate: "月末",
@@ -93,7 +93,7 @@ const initialProjects: Project[] = [
     name: "品川ルート",
     contractStart: "2024-08-01",
     contractEnd: "2024-12-31",
-    reward: "990000",
+    unitPrice: 990000,
     startTime: "08:30",
     endTime: "17:30",
     paymentDate: "月末",
@@ -171,7 +171,7 @@ const handleCustomFieldChange = (index: number, fieldName: string, value: string
       name: "",
       contractStart: "",
       contractEnd: "",
-      reward: "",
+      unitPrice: "",
       startTime: "08:00",
       endTime: "17:00",
       paymentDate: "",
@@ -202,29 +202,30 @@ const handleCustomFieldChange = (index: number, fieldName: string, value: string
         <button className="bg-blue-600 text-white font-bold px-4 py-2 rounded shadow hover:bg-blue-700 transition" onClick={handleAdd}>新規案件追加</button>
         <button className="bg-green-600 text-white font-bold px-4 py-2 rounded shadow hover:bg-green-700 transition" onClick={handleSave}>保存</button>
       </div>
-      <table className="min-w-full text-base shadow-md rounded overflow-hidden bg-[#1e293b] text-[#1f2937] text-[#1f2937]">
+      <div className="overflow-x-auto">
+  <table className="min-w-[1600px] w-full text-base shadow-md rounded overflow-hidden bg-[#1e293b] text-[#1f2937]">
         <thead>
           <tr className="bg-[#1e293b] hover:bg-[#334155] border-b border-[#475569] text-[#1f2937]">
-            <th className="border px-2 py-1 text-[#1f2937] text-white">操作</th>
-            <th className="border px-2 py-1 text-[#1f2937] text-white">会社名</th>
-            <th className="border px-2 py-1 text-[#1f2937] text-white">担当社員</th>
-            <th className="border px-2 py-1 text-[#1f2937] text-white">電話番号</th>
-            <th className="border px-2 py-1 text-[#1f2937] text-white">案件名</th>
-            <th className="border px-2 py-1 text-[#1f2937] text-white">契約開始日</th>
-            <th className="border px-2 py-1 text-[#1f2937] text-white">契約終了日</th>
-            <th className="border px-2 py-1 text-white">単価(円/日)</th>
-            <th className="border px-2 py-1 text-[#1f2937] text-white">勤務時間</th>
-            <th className="border px-2 py-1 text-[#1f2937] text-white">入金日</th>
-            <th className="border px-2 py-1 text-[#1f2937] text-white">支払日</th>
-            <th className="border px-2 py-1 text-white">必要人員</th>
-<th className="border px-4 py-1 text-white w-[300px]">ファイル</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[120px]">操作</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[150px]">会社名</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[150px]">担当社員</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[150px]">電話番号</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[150px]">案件名</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[120px]">契約開始日</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[120px]">契約終了日</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[120px]">単価(円/日)</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[120px]">勤務時間</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[120px]">入金日</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[120px]">支払日</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[120px]">必要人員</th>
+            <th className="border px-2 py-1 text-[#1f2937] text-white min-w-[120px]">ファイル</th>
 {projectCustomFields.map((field) => (
   <th key={field} className="border px-2 py-1 text-white">{field}</th>
 ))}
           </tr>
         </thead>
         <tbody>
-{projects.map((p, i) => (
+          {projects.map((p, i) => (
   <tr key={p.id} className="even:bg-white odd:bg-gray-50 hover:bg-gray-100 font-normal text-right text-[#1f2937]">
             <td className="p-2 border border-[#d1d5db] bg-[#f1f5f9] text-[#1f2937]">
       <div className="flex justify-center gap-2 text-[#1f2937]">
@@ -339,12 +340,12 @@ const handleCustomFieldChange = (index: number, fieldName: string, value: string
       <div className="text-right">{p.customFields?.[field] || ""}</div>
     )}
   </td>
-))}
-  </tr>
-))}
-
-</tbody>
+              ))}
+            </tr>
+          ))}
+        </tbody>
       </table>
+      </div>
     </div>
   );
 }

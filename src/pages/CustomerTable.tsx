@@ -107,7 +107,7 @@ const getCurrentUserCount = (companyName: string) => {
       <NewCustomerModal
   isOpen={showModal}
   onClose={() => setShowModal(false)}
-  onSave={async (rec) => {
+  onSave={(rec) => {
     const currentUsers = getCurrentUserCount(rec.company);
 
     let maxAllowed = 0;
@@ -122,24 +122,31 @@ const getCurrentUserCount = (companyName: string) => {
       alert(`⚠ 現在の利用人数(${currentUsers}名)は、契約プランの上限(${maxAllowed}名)を超えています。\nアップグレードをご検討ください。`);
       return;
     }
-    const { email, password } = await createCustomerWithAuth(rec.company, rec.contactPerson);
+
+    // ✅ ランダムIDとパスワードを生成
+    const uid = `cust${Date.now()}`;
+    const upw = Math.random().toString(36).slice(-8);
 
     const withAuth = {
       ...rec,
       id: Date.now().toString(),
-      uid: email,
-      upw: password,
+      uid,
+      upw,
     };
 
+    // ✅ 保存
     save([...customers, withAuth]);
 
+    // ✅ 発行情報を表示
     alert(
-      "✅ 担当者アカウントを作成しました\n" +
-      `ID: ${email}\n` +
-      `PW: ${password}`
+      `✅ 顧客アカウントを作成しました\n` +
+      `ログインID: ${uid}\n` +
+      `パスワード: ${upw}`
     );
+
+    setShowModal(false);
   }}
-  pricingPlans={pricingPlans}  // ✅ ここに追加
+  pricingPlans={pricingPlans}
 />
 
       {/* ----- 一覧テーブル（表示列は 8 項目） ----- */}

@@ -7,18 +7,25 @@ type AdminUser = {
   contactPerson: string;
   phone: string;
   uid: string;
+  loginId: string;   // ✅追加
+  password: string;
   attachments: { name: string; dataUrl: string }[];
   [key: string]: any; // カスタム項目のための動的プロパティ
 };
 
-const generateUniqueUid = (existingAdmins: AdminUser[]): string => {
-  const existingUids = existingAdmins.map((a) => a.uid);
+const generateLoginCredentials = (existingAdmins: AdminUser[]) => {
+  const existingIds = existingAdmins.map((a) => a.loginId);
   let num = 1;
   while (true) {
-    const candidate = `admin${String(num).padStart(3, "0")}`;
-    if (!existingUids.includes(candidate)) return candidate;
+    const candidateId = `admin${String(num).padStart(4, "0")}`;
+    if (!existingIds.includes(candidateId)) {
+      break;
+    }
     num++;
   }
+  const loginId = `admin${String(num).padStart(4, "0")}`;
+  const password = Math.random().toString(36).slice(-8); // ランダム8文字
+  return { loginId, password };
 };
 
 const AdminManager = () => {
@@ -33,6 +40,8 @@ const AdminManager = () => {
     contactPerson: "",
     phone: "",
     uid: "",
+    loginId: "", // ✅追加
+    password: "",
     attachments: [],
   };
 
@@ -66,11 +75,19 @@ const AdminManager = () => {
   };
 
   const handleAdd = () => {
-    const next = [...admins, { ...draft, id: admins.length }];
-    persist(next);
-    setDraft(emptyAdmin);
-    setIsAdding(false);
-  };
+  const { loginId, password } = generateLoginCredentials(admins); // ✅追加
+  const next = [
+    ...admins,
+    { ...draft, id: admins.length, loginId, password } // ✅IDとパスワードを追加
+  ];
+  persist(next);
+
+  // ✅ 登録後に表示
+  alert(`✅ 管理者が追加されました\nログインID: ${loginId}\nパスワード: ${password}`);
+
+  setDraft(emptyAdmin);
+  setIsAdding(false);
+};
 
   const startEdit = (row: AdminUser) => {
     setDraft({ ...row });
@@ -134,6 +151,8 @@ const AdminManager = () => {
         <td className="border px-3 py-2">{isEdit ? (<input className="w-full border px-2 py-1" value={draft.contactPerson} onChange={(e) => setDraft({ ...draft, contactPerson: e.target.value })} />) : admin.contactPerson}</td>
         <td className="border px-3 py-2">{isEdit ? (<input className="w-full border px-2 py-1" value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />) : admin.phone}</td>
         <td className="border px-3 py-2">{admin.uid}</td>
+        <td className="border px-3 py-2">{admin.loginId}</td>
+        <td className="border px-3 py-2">{admin.password}</td>
         {customFields.map((field, idx) => (
           <td key={idx} className="border px-3 py-2">
             {isEdit ? (
@@ -212,7 +231,9 @@ const AdminManager = () => {
             <th className="border px-3 py-2">会社名</th>
             <th className="border px-3 py-2">担当者</th>
             <th className="border px-3 py-2">電話番号</th>
+            <th className="border px-3 py-2">UID</th>
             <th className="border px-3 py-2">ログインID</th>
+            <th className="border px-3 py-2">パスワード</th>
             {customFields.map((field, idx) => (
               <th key={idx} className="border px-3 py-2">{field}</th>
             ))}
@@ -230,6 +251,8 @@ const AdminManager = () => {
               <td className="border px-3 py-2">
                 <span className="text-gray-500">{draft.uid}</span>
               </td>
+              <td className="border px-3 py-2 text-gray-500">自動発行</td>
+              <td className="border px-3 py-2 text-gray-500">自動発行</td>
               {customFields.map((field, idx) => (
                 <td key={idx} className="border px-3 py-2">
                   <input

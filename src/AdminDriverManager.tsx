@@ -10,34 +10,35 @@ interface Notification {
 interface Driver {
   id: string;
   name: string;
-  /** 雇用区分 */
   contractType: "社員" | "委託";
   company: string;
   phone: string;
   address: string;
   mail?: string;
   birthday: string;
-  /** インボイス登録番号（委託のみ任意入力） */
   invoiceNo?: string;
   licenseFiles: File[];
   licenseExpiry: string;
   attachments: File[];
   hidden: boolean;
   status: "予定なし" | "稼働前" | "稼働中" | "休憩中" | "稼働終了";
-    isWorking: boolean; // 勤務ボタン押したか
-resting: boolean; // 休憩中かどうか
-shiftStart?: string; // シフト開始時間（例: "09:00"）
-shiftEnd?: string;   // シフト終了時間（例: "18:00"）
-statusUpdatedAt?: string;
-uid: string;
-password?: string;
-[key: string]: any;
+  isWorking: boolean;
+  resting: boolean;
+  shiftStart?: string;
+  shiftEnd?: string;
+  statusUpdatedAt?: string;
+  uid: string;
+  loginId: string;   // ✅追加
+  password: string;  // ✅追加（必須化）
+  [key: string]: any;
 }
 
 const initialDrivers: Driver[] = [
   {
      id:       genRandom(5),   // 例：k3x9q
   uid: "driver001",
+  loginId: "driver0001",  // ✅追加
+  password: genRandom(8),
   name: "",
   contractType: "社員",
   company: "",
@@ -56,8 +57,10 @@ const initialDrivers: Driver[] = [
   shiftEnd:   "18:00",
   },
   {
-    id: "driver002",
+    uid: "driver002",
+    loginId: "driver0002",
     password: genRandom(8),
+    id: "driver002",
     name: "鈴木花子",
     contractType: "委託",
     invoiceNo: "T1234567890123",
@@ -213,16 +216,21 @@ useEffect(() => {
   const handleAddRow = () => {
   const adminCompany = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}").company || "";
 
+  // ✅ ログインIDとパスワードを生成
+  const newLoginId = `driver${String(drivers.length + 1).padStart(4, "0")}`;
+  const newPassword = genRandom(8);
+
   const updated = [
     ...drivers,
     {
-      id: `driver${drivers.length + 1}`,
+      id: `driver${String(drivers.length + 1).padStart(4, "0")}`,
       uid: `uid${Date.now()}`,
-      password: genRandom(8),
+      loginId: `driver${String(drivers.length + 1).padStart(4, "0")}`,
+      password: newPassword, // ✅追加
       name: "",
       contractType: "社員",
       invoiceNo: "",
-      company: adminCompany, // ✅ 管理者と同じ会社を自動設定
+      company: adminCompany,
       phone: "",
       address: "",
       mail: "",
@@ -242,9 +250,8 @@ useEffect(() => {
   localStorage.setItem(storageKey, JSON.stringify(updated));
   setEditingIndex(drivers.length);
   setExpandedRowIndex(drivers.length);
+alert(`✅ ドライバーが追加されました\nログインID: ${newLoginId}\nパスワード: ${newPassword}`);
 };
-
-
 const handleFileUpload = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
   const files = e.target.files;
   if (!files) return;
@@ -345,6 +352,7 @@ const getStatusColor = (status: string) => {
             <th className="border px-2 py-1">所属会社</th>
             <th className="border px-2 py-1">電話番号</th>
             <th className="border px-2 py-1">ログインID</th>
+            <th className="border px-2 py-1">パスワード</th>
             <th className="border px-2 py-1">住所</th>
             <th className="border px-2 py-1">メール</th>
             <th className="border px-2 py-1">生年月日</th>
@@ -434,6 +442,8 @@ const getStatusColor = (status: string) => {
     disabled
   />
 </td>
+<td className="border px-2 py-1">{d.loginId}</td>
+<td className="border px-2 py-1">{d.password}</td>
               <td className="border px-2 py-1">
                 {editingIndex === idx ? (
                   <input className="w-full text-sm" value={d.address} onChange={(e) => handleChange(idx, "address", e.target.value)} />
