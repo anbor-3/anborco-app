@@ -22,7 +22,7 @@ const App = () => {
   };
 
   return (
-    <div className="app-container driver-container flex flex-col min-h-screen bg-white">
+    <div className="w-full driver-container flex flex-col min-h-screen bg-white">
       {/* ✅ ヘッダー */}
       <header className="bg-orange-300 flex justify-between items-center px-6 py-3 shadow fixed top-0 left-0 right-0 h-16 z-10">
         <div className="flex items-center gap-4">

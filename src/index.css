@@ -26,21 +26,16 @@
 
   /* ✅ アプリ全体の幅を完全固定（中央寄せ） */
   .app-container {
-  width: 100%;           /* 画面幅に合わせる */
-  max-width: 1280px;     /* 最大1280px */
-  margin: 0 auto;
+  width: 100%;
   background-color: #fff;
-  padding: 0 16px;       /* 余白を確保 */
+  padding: 0 16px;
 }
 
-  /* ✅ 管理画面・ドライバー画面・マスター画面のメイン幅を固定 */
 .main-fixed {
   width: 100%;
-  max-width: calc(1280px - 240px); /* サイドバー込みでもOK */
-  margin: 0 auto;
+  margin: 0;
   min-height: calc(100vh - 64px);
 }
-
   /* ✅ ログインページ */
   .login-container {
     @apply w-full h-screen flex justify-center items-center;

@@ -35,7 +35,7 @@ function AppLayout() {
   }
 
   return (
-    <div className="w-full max-w-[1280px] mx-auto bg-white">
+    <div className="w-full bg-white">
       {/* ✅ 完全固定幅コンテナ */}
       <div className="min-h-screen flex flex-col">
         {!isLoginPage && (

@@ -77,7 +77,7 @@ const setupPlans = [
 ];
 
   return (
-    <div className="responsive-container master-container flex flex-col h-screen">
+    <div className="master-container flex flex-col h-screen">
       {/* 共通ヘッダー */}
       <header className="bg-green-100 flex items-center justify-between px-4 py-2 w-full">
         <img
