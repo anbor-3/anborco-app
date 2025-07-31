@@ -1,0 +1,25 @@
+export const initialDemoDrivers = [
+  {
+    id: "demo001",
+    uid: "demo001",
+    loginId: "demo",
+    password: "demo",
+    name: "デモ太郎",
+    contractType: "社員",
+    invoiceNo: "",
+    company: "demoCompany",
+    phone: "090-0000-0000",
+    address: "東京都デモ市",
+    mail: "demo@example.com",
+    birthday: "1990-01-01",
+    licenseFiles: [],
+    licenseExpiry: "2025-12-31",
+    attachments: [],
+    hidden: false,
+    status: "予定なし",
+    isWorking: false,
+    resting: false,
+    shiftStart: "09:00",
+    shiftEnd: "18:00",
+  }
+];

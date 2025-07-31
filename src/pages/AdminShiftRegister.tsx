@@ -195,16 +195,22 @@ useEffect(() => {
 }, [year, month]);
 
 useEffect(() => {
-  const savedDrivers = localStorage.getItem("driverList");
+  const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
+  const company = admin.company || "";
+
+  const savedDrivers = localStorage.getItem(`driverList_${company}`);
   if (savedDrivers) {
     try {
-      const parsed = JSON.parse(savedDrivers); // ← idとnameを両方保持
-      setDriverList(parsed);
+      const parsed = JSON.parse(savedDrivers);
+      // nameとidだけ使う構造なら map() して整える
+      const simplified = parsed.map((d: any) => ({ id: d.id, name: d.name }));
+      setDriverList(simplified);
     } catch (e) {
       console.error("ドライバーリスト読み込み失敗", e);
     }
   }
 }, []);
+
 useEffect(() => {
   const savedProjects = localStorage.getItem("projectList");
   if (savedProjects) {

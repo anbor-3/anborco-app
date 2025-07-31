@@ -1,6 +1,14 @@
-import React, { useState } from 'react';
+import  { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Link } from "react-router-dom";
+import { initialDemoDrivers } from "../utils/initialDemoDrivers";
+
+const resetDemoData = () => {
+  const today = new Date().toISOString().slice(0, 10);
+  localStorage.setItem("driverList_demoCompany", JSON.stringify(initialDemoDrivers));
+  localStorage.setItem("demoResetDate", today);
+  console.log("✅ demoデータを初期化しました");
+};
 
 const Login = () => {
   type Role = 'driver' | 'admin' | 'master';
@@ -70,7 +78,9 @@ const Login = () => {
         alert("ログインID または パスワードが違います");
         return;
       }
-
+      if (user.loginId === "demo") {
+  resetDemoData(); // 👈 demoログイン時のみ初期化
+}
       localStorage.setItem("loggedInDriver", JSON.stringify(user));
       localStorage.setItem("currentUser", JSON.stringify({
         id: user.uid,
@@ -92,7 +102,9 @@ const Login = () => {
         alert("ID または パスワードが違います");
         return;
       }
-
+      if (user.id === "demo") {
+  resetDemoData(); // 👈 demoログイン時のみ初期化
+}
       localStorage.setItem("loggedInAdmin", JSON.stringify(user));
       localStorage.setItem("currentUser", JSON.stringify({
         id: user.id,
@@ -100,72 +112,72 @@ const Login = () => {
         company: user.company,
         role: "admin"
       }));
-
+      localStorage.setItem("company", user.company);
       navigate("/admin");
     }
   };
 
   return (
-    <div className="login-container"> {/* ✅ 背景エリア */}
-  <div className="login-box">
-    <div className="flex justify-center mb-4">
-      <img src="/logo.png" alt="ロゴ" className="h-20" />
+    <div className="login-container flex items-center justify-center min-h-screen bg-gray-100">
+  <div className="login-box w-full max-w-2xl bg-white p-10 rounded shadow-lg">
+    <div className="flex justify-center mb-6">
+      <img src="/logo.png" alt="ロゴ" className="h-40" />
     </div>
-        <div className="flex justify-center gap-4 mb-4">
-          <button
-            className={`px-4 py-2 rounded ${selectedRole === 'driver' ? 'bg-green-700 text-white' : 'bg-green-200'}`}
-            onClick={() => setSelectedRole('driver')}
-          >
-            ドライバー
-          </button>
-          <button
-            className={`px-4 py-2 rounded ${selectedRole === 'admin' ? 'bg-green-700 text-white' : 'bg-green-200'}`}
-            onClick={() => setSelectedRole('admin')}
-          >
-            管理者
-          </button>
-          <button
-            className={`px-4 py-2 rounded ${selectedRole === 'master' ? 'bg-gray-700 text-white' : 'bg-gray-200'}`}
-            onClick={() => setSelectedRole('master')}
-          >
-            マスター
-          </button>
-        </div>
-        <form className="space-y-4" onSubmit={handleSubmit}>
-          <div>
-            <label className="block mb-1 text-sm font-medium text-gray-700">ID（ログインID）</label>
-            <input
-              type="text"
-              value={id}
-              onChange={(e) => setId(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-md"
-              placeholder={selectedRole === 'driver' ? 'ログインIDを入力' : 'IDを入力'}
-            />
-          </div>
-          <div>
-            <label className="block mb-1 text-sm font-medium text-gray-700">パスワード</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-md"
-              placeholder="パスワードを入力"
-            />
-          </div>
-          <button
-            type="submit"
-            className="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 transition"
-          >
-            ログイン
-          </button>
-        </form>
-        <div className="text-right mt-2">
-          <Link to="/reset" className="text-sm text-blue-600 hover:underline">
-            パスワードを忘れた方はこちら
-          </Link>
-        </div>
+    <div className="flex justify-center gap-4 mb-6">
+      <button
+        className={`px-6 py-3 rounded text-base font-semibold ${selectedRole === 'driver' ? 'bg-green-700 text-white' : 'bg-green-200'}`}
+        onClick={() => setSelectedRole('driver')}
+      >
+        ドライバー
+      </button>
+      <button
+        className={`px-6 py-3 rounded text-base font-semibold ${selectedRole === 'admin' ? 'bg-green-700 text-white' : 'bg-green-200'}`}
+        onClick={() => setSelectedRole('admin')}
+      >
+        管理者
+      </button>
+      <button
+        className={`px-6 py-3 rounded text-base font-semibold ${selectedRole === 'master' ? 'bg-gray-700 text-white' : 'bg-gray-200'}`}
+        onClick={() => setSelectedRole('master')}
+      >
+        マスター
+      </button>
+    </div>
+    <form className="space-y-6" onSubmit={handleSubmit}>
+      <div>
+        <label className="block mb-2 text-base font-semibold text-gray-700">ID（ログインID）</label>
+        <input
+          type="text"
+          value={id}
+          onChange={(e) => setId(e.target.value)}
+          className="w-full px-5 py-3 border border-gray-300 rounded-md text-lg"
+          placeholder={selectedRole === 'driver' ? 'ログインIDを入力' : 'IDを入力'}
+        />
       </div>
+      <div>
+        <label className="block mb-2 text-base font-semibold text-gray-700">パスワード</label>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="w-full px-5 py-3 border border-gray-300 rounded-md text-lg"
+          placeholder="パスワードを入力"
+        />
+      </div>
+      <button
+        type="submit"
+        className="w-full bg-green-600 text-white py-3 text-lg font-bold rounded hover:bg-green-700 transition"
+      >
+        ログイン
+      </button>
+    </form>
+    <div className="text-right mt-4">
+      <Link to="/reset" className="text-sm text-blue-600 hover:underline">
+        パスワードを忘れた方はこちら
+      </Link>
     </div>
+  </div>
+</div>
   );
 };
 

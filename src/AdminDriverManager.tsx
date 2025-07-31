@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import  { useState, useEffect } from "react";
 const genRandom = (len = 6) =>
   Math.random().toString(36).slice(-len);
 interface Notification {
@@ -7,7 +7,7 @@ interface Notification {
   timestamp: string;
   read: boolean;
 }
-interface Driver {
+export interface Driver {
   id: string;
   name: string;
   contractType: "社員" | "委託";
@@ -317,7 +317,7 @@ const getStatusColor = (status: string) => {
 };
 
   return (
-    <div className="p-4">
+    <div className="p-4 w-full overflow-auto bg-white">
       <div className="flex items-center text-2xl font-bold mb-4">
         <span className="mr-2">🚚</span>
         <span>ドライバー管理 <span className="text-sm text-gray-500 ml-2">-Driver Manager-</span></span>
@@ -340,7 +340,8 @@ const getStatusColor = (status: string) => {
         )}
       </div>
 
-      <table className="w-full border border-gray-300 shadow">
+      <div className="w-full overflow-x-auto">
+       <table className="w-full border border-gray-300 shadow table-auto whitespace-nowrap">
         <thead className="bg-gray-800 text-white font-bold">
           <tr>
             <th className="border px-2 py-1">ステータス</th>
@@ -365,7 +366,7 @@ const getStatusColor = (status: string) => {
         <tbody>
            {drivers.map((d, idx) => (
             <tr key={idx} className="odd:bg-white even:bg-gray-100">
-              <td className="border px-2 py-1">
+              <td className="border px-2 py-1 break-all">
   <div className={`px-2 py-1 rounded-full text-xs font-semibold ${getStatusColor(d.status)}`}>
     {d.status}
   </div>
@@ -373,7 +374,7 @@ const getStatusColor = (status: string) => {
     最終更新: {d.statusUpdatedAt || "未取得"}
   </div>
 </td>
-<td className="border px-2 py-1">
+<td className="border px-2 py-1 break-all">
   <button
     className="bg-yellow-500 hover:bg-yellow-600 text-white px-2 py-1 rounded mr-2"
     onClick={() => handleEdit(idx)}
@@ -387,14 +388,14 @@ const getStatusColor = (status: string) => {
     削除
   </button>
               </td>
-              <td className="border px-2 py-1">{d.id}</td>
-              <td className="border px-2 py-1">
+              <td className="border px-2 py-1 break-all">{d.id}</td>
+              <td className="border px-2 py-1 break-all">
                 {editingIndex === idx ? (
                   <input className="w-full text-sm" value={d.name} onChange={(e) => handleChange(idx, "name", e.target.value)} />
                 ) : d.name}
               </td>
                {/* 契約種別セル */}
- <td className="border px-2 py-1">
+ <td className="border px-2 py-1 break-all">
    {editingIndex === idx ? (
      <select
        className="w-full text-sm"
@@ -414,7 +415,7 @@ const getStatusColor = (status: string) => {
  </td>
 
  {/* インボイス番号セル（委託のみ編集可） */}
- <td className="border px-2 py-1">
+ <td className="border px-2 py-1 break-all">
    {editingIndex === idx ? (
      <input
        className="w-full text-sm disabled:bg-gray-100"
@@ -425,31 +426,24 @@ const getStatusColor = (status: string) => {
      />
    ) : d.contractType === "委託" ? d.invoiceNo || "-" : "-"}
  </td>
-              <td className="border px-2 py-1">
+              <td className="border px-2 py-1 break-all">
                 {editingIndex === idx ? (
                   <input className="w-full text-sm" value={d.company} onChange={(e) => handleChange(idx, "company", e.target.value)} />
                 ) : d.company}
               </td>
-              <td className="border px-2 py-1">
+              <td className="border px-2 py-1 break-all">
                 {editingIndex === idx ? (
                   <input className="w-full text-sm" value={d.phone} onChange={(e) => handleChange(idx, "phone", e.target.value)} />
                 ) : d.phone}
               </td>
-              <td className="border px-2 py-1">
-  <input
-    className="w-full text-sm bg-gray-100"
-    value={d.uid}
-    disabled
-  />
-</td>
-<td className="border px-2 py-1">{d.loginId}</td>
-<td className="border px-2 py-1">{d.password}</td>
-              <td className="border px-2 py-1">
+              <td className="border px-2 py-1 break-all">{d.loginId}</td>
+<td className="border px-2 py-1 break-all">{d.password}</td>
+              <td className="border px-2 py-1 break-all">
                 {editingIndex === idx ? (
                   <input className="w-full text-sm" value={d.address} onChange={(e) => handleChange(idx, "address", e.target.value)} />
                 ) : d.address}
               </td>
-              <td className="border px-2 py-1">
+              <td className="border px-2 py-1 break-all">
                {editingIndex === idx ? (
                  <input
                    type="email"
@@ -462,7 +456,7 @@ const getStatusColor = (status: string) => {
                  />
                ) : d.mail}
              </td>
-              <td className="border px-2 py-1">
+              <td className="border px-2 py-1 break-all">
                 {editingIndex === idx ? (
                   <input type="date" className="w-full text-sm" value={d.birthday} onChange={(e) => handleChange(idx, "birthday", e.target.value)} />
                 ) : d.birthday}
@@ -491,13 +485,13 @@ const getStatusColor = (status: string) => {
   {(d.attachments || []).map((file, fileIndex) => (
     <li key={fileIndex} className="flex items-center justify-between mb-1">
       <a
-        href={URL.createObjectURL(file)}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-blue-600 underline truncate w-32"
-      >
-        {file.name}
-      </a>
+  href={URL.createObjectURL(file)}
+  target="_blank"
+  rel="noopener noreferrer"
+  className="text-blue-600 underline break-all w-32"
+>
+  {file.name}
+</a>
       {editingIndex === idx && (
         <button
           className="text-red-500 ml-2 text-xs"
@@ -517,6 +511,7 @@ const getStatusColor = (status: string) => {
           ))}
         </tbody>
       </table>
+    </div>
     </div>
   );
 };

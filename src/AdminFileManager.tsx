@@ -1,40 +1,9 @@
-import React, { ChangeEvent, useEffect, useState } from "react";
-import { saveAs } from "file-saver";
-import { Download, Eye, Trash2, Upload } from "lucide-react";
+import  {useEffect, useState } from "react";
 import PO_PDF  from "@/assets/発注書テンプレート.pdf?url";
 import PS_PDF  from "@/assets/支払明細書テンプレート.pdf?url";
 import INV_PDF from "@/assets/請求書テンプレート.pdf?url";
-import ConfirmSendModal from "@/components/ConfirmSendModal";
-
-/* ---------- デフォルトテンプレートの初期登録 ---------- */
-// 1度でも登録されていればスキップする
-(function storeDefaults() {
-  const defs = [
-    { type: "発注書" as const,     name: "発注書テンプレート.pdf",       url: PO_PDF  },
-    { type: "支払明細書" as const, name: "支払明細書テンプレート.pdf",   url: PS_PDF  },
-    { type: "請求書" as const,     name: "請求書テンプレート.pdf",       url: INV_PDF },
-  ];
-
-  defs.forEach(({ type, name, url }) => {
-    const exists = Object.keys(localStorage).some(k => k.startsWith(`tpl_${type}_`));
-    if (exists) return;
-
-    // BLOB→base64 変換して保存
-    fetch(url)
-      .then(res => res.blob())
-      .then(blob => new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror   = reject;
-        reader.readAsDataURL(blob);
-      }))
-      .then(dataUrl => {
-        const today = new Date().toISOString().split("T")[0];
-        const key = `tpl_${type}_${Date.now()}`;
-        localStorage.setItem(key, JSON.stringify({ name, type, date: today, dataUrl }));
-      });
-  });
-})();
+import ConfirmSendModal from "./components/ConfirmSendModal";
+import type { Driver } from "./AdminDriverManager";
 
 /* ----------- 型定義 ----------- */
 // テンプレートの種類
@@ -47,6 +16,7 @@ interface Template {
   type: TemplateType;   // 種別
   date: string;         // 登録日 (YYYY-MM-DD)
   dataUrl: string;      // base64 Data URL
+  map?: Record<string, string>;
 }
 
 // 日報・発注書など毎日生成されるPDF
@@ -87,7 +57,36 @@ export default function AdminFileManager() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [tplType , setTplType ]  = useState<Template["type"]>("発注書");
   const [tplFile , setTplFile ]  = useState<File | null>(null);
- 
+  const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
+ // ✅ テンプレートアップロード処理
+const handleUpload = () => {
+  if (!tplFile) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const result = reader.result as string;
+    if (!result.startsWith("data:application/pdf;base64,")) {
+      alert("無効なPDFファイルです（base64形式でない）");
+      return;
+    }
+
+    const name = tplFile.name.replace(/\.(pdf)$/i, "");
+    const newTpl = {
+      key: `tpl_${tplType}_${Date.now()}`,
+      name,
+      type: tplType,
+      date: todayStr(),
+      dataUrl: result,
+      map: {},
+    };
+    localStorage.setItem(newTpl.key, JSON.stringify(newTpl));
+    setTplFile(null);
+    alert("テンプレートを保存しました。");
+    reload();
+  };
+  reader.readAsDataURL(tplFile);
+};
+
  useEffect(() => {
   const tmpPdfs: PdfItem[] = [];
   const tmpZips: ZipItem[] = [];
@@ -149,6 +148,182 @@ const reload = () => {
 };
 
 useEffect(reload, []);
+// === ドライバー情報をプレースホルダーに差し込む関数 ===
+function getDriverAchievements(uid: string, date: string): Record<string, string> {
+  const key = `achievement_${uid}_${date}`;
+  const raw = localStorage.getItem(key);
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw); // 例: { totalDeliveries: "24", totalHours: "6.5" }
+  } catch {
+    return {};
+  }
+}
+// 🔧 プレースホルダーとドライバー・実績情報を合成する関数
+function buildFinalMapping(
+  baseMap: Record<string, string>,
+  driver: Driver
+): Record<string, string> {
+  const result: Record<string, string> = {};
+
+  // 🔸発注No（管理会社単位でインクリメント）
+  const company = driver.company ?? "default";
+  const noKey = `poCounter_${company}`;
+  const current = parseInt(localStorage.getItem(noKey) || "0");
+  const nextNo = current + 1;
+  localStorage.setItem(noKey, String(nextNo));
+  result["{{発注No}}"] = String(nextNo).padStart(4, "0");
+
+  // 🔸担当者名（ログインユーザー）
+  const admins = JSON.parse(localStorage.getItem(`adminList_${company}`) || "[]");
+  const loggedIn = admins.find((a: any) => a.loginId === localStorage.getItem("loginId"));
+  result["{{担当者}}"] = loggedIn?.name || "";
+
+  // 🔸今日の日付
+  result["{{today}}"] = todayStr();
+
+  // 🔸ドライバー情報
+  Object.entries(baseMap).forEach(([placeholder, driverField]) => {
+    if (!placeholder.startsWith("{{") || placeholder in result) return;
+    if (driverField.startsWith("実績_")) return;
+    result[placeholder] = driver[driverField] ?? "";
+  });
+
+  // 🔸実績データ
+  const achievements = getDriverAchievements(driver.uid, todayStr());
+  Object.entries(baseMap).forEach(([placeholder, mappedKey]) => {
+    if (!mappedKey.startsWith("実績_")) return;
+    const key = mappedKey.replace("実績_", "");
+    result[placeholder] = achievements[key] ?? "";
+  });
+
+  // 🔸金額の自動計算（数量×単価）
+  let total = 0;
+  for (let i = 1; i <= 5; i++) {
+    const qty = parseFloat(result[`{{item_${i}_qty}}`] ?? "0");
+    const price = parseFloat(result[`{{item_${i}_price}}`] ?? "0");
+    const amount = qty * price;
+    result[`{{item_${i}_amount}}`] = String(amount);
+    total += amount;
+  }
+  result["{{totalAmount}}"] = String(total);
+
+  return result;
+}
+
+function applyDriverMapping(
+  templateDataUrl: string,
+  mapping: Record<string, string>,
+  driver: Driver
+): string {
+  const base64Body = templateDataUrl.split(',')[1];
+  let content = atob(base64Body);
+
+  // ✅ ドライバー情報の差し込み
+  Object.entries(mapping).forEach(([placeholder, driverField]) => {
+    if (driverField.startsWith("実績_")) return; // 実績項目は後で処理
+    const value = driver[driverField] ?? "";
+    content = content.replaceAll(placeholder, value);
+  });
+
+  // ✅ 実績データの差し込み
+  const achievements = getDriverAchievements(driver.uid, todayStr());
+  Object.entries(mapping).forEach(([placeholder, mappedKey]) => {
+    if (!mappedKey.startsWith("実績_")) return;
+    const key = mappedKey.replace("実績_", "");
+    const value = achievements[key] ?? "";
+    content = content.replaceAll(placeholder, value);
+  });
+
+  return `data:application/pdf;base64,${btoa(content)}`;
+}
+
+const [driverList, setDriverList] = useState<Driver[]>([]);
+
+useEffect(() => {
+  const company = localStorage.getItem("company") ?? "default";
+  const initializedKey = `defaultTemplatesInitialized_${company}`;
+
+  // ✅ 実際にテンプレートが既に存在するかチェック
+  const existing = Object.entries(localStorage).filter(([k]) =>
+    k.startsWith("tpl_発注書") || k.startsWith("tpl_支払明細書") || k.startsWith("tpl_請求書")
+  );
+  if (existing.length >= 3) {
+    console.log("⏭ 既にテンプレートが3件以上あるため初期登録スキップ");
+    return;
+  }
+
+  if (localStorage.getItem(initializedKey)) {
+    console.log("⏭ 初期化キーあり。スキップ");
+    return;
+  }
+
+  const defs = [
+    { type: "発注書" as const, name: "発注書テンプレート.pdf", url: PO_PDF },
+    { type: "支払明細書" as const, name: "支払明細書テンプレート.pdf", url: PS_PDF },
+    { type: "請求書" as const, name: "請求書テンプレート.pdf", url: INV_PDF },
+  ];
+
+  Promise.all(
+    defs.map(({ type, name, url }) =>
+      fetch(url)
+        .then(res => res.blob())
+        .then(blob => new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            if (!result.startsWith("data:application/pdf;base64,")) {
+              reject(new Error("base64 PDF形式ではありません"));
+            } else {
+              resolve(result);
+            }
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        }))
+        .then(dataUrl => {
+          const key = `tpl_${type}_${Date.now()}`;
+          const tpl: Template = {
+            key,
+            name,
+            type,
+            date: todayStr(),
+            dataUrl,
+            map: {},
+          };
+          localStorage.setItem(key, JSON.stringify(tpl));
+        })
+    )
+  ).then(() => {
+    localStorage.setItem(initializedKey, "true");
+    console.log("✅ 初期テンプレート登録完了");
+    reload();
+  }).catch(err => {
+    console.error("❌ 初期テンプレート登録エラー:", err);
+  });
+}, []);
+
+useEffect(() => {
+  const company = localStorage.getItem("company");
+  if (!company) {
+    console.warn("⚠️ company が localStorage にありません");
+    return;
+  }
+
+  const raw = localStorage.getItem(`driverList_${company}`);
+  if (!raw) {
+    console.warn(`⚠️ driverList_${company} が見つかりません`);
+    return;
+  }
+
+  try {
+    const list = JSON.parse(raw);
+    console.log("✅ driverList を取得しました:", list);
+    setDriverList(list);
+  } catch (e) {
+    console.error("❌ driverList のパースに失敗:", e);
+  }
+}, []);
 
 // ------- マッピング編集モーダル用 -------
 const [mapKey,        setMapKey]        = useState<string|null>(null);          // 編集中の localStorage キー
@@ -157,15 +332,34 @@ const [mapping,       setMapping]       = useState<Record<string,string>>({});  
 
 /** モーダルを開く */
 async function openMappingModal(storageKey: string) {
-  const meta = JSON.parse(localStorage.getItem(storageKey)!);
+  const metaRaw = localStorage.getItem(storageKey);
+  if (!metaRaw) {
+    console.warn(`テンプレート ${storageKey} が見つかりません`);
+    return;
+  }
 
-  // pdf から {{placeholder}} を抽出
-  const { extractPlaceholders } = await import("@/utils/pdfUtils");
-  const ph = await extractPlaceholders(meta.dataUrl);
+  const meta = JSON.parse(metaRaw);
+  const dataUrl = meta.dataUrl;
+  if (!dataUrl || !dataUrl.startsWith("data:application/pdf;base64,")) {
+    alert("このテンプレートは破損しています（base64 PDFではありません）");
+    return;
+  }
 
-  setMapKey(storageKey);
-  setPlaceholders(ph);
-  setMapping(meta.map ?? {});          // 既に保存してあれば読み込む
+  try {
+    const { extractPlaceholders } = await import("./utils/pdfUtils");
+    const ph = await extractPlaceholders(dataUrl);
+
+    if (!Array.isArray(ph) || ph.length === 0) {
+      throw new Error("プレースホルダーが見つかりません");
+    }
+
+    setMapKey(storageKey);
+    setPlaceholders(ph);
+    setMapping(meta.map ?? {});
+  } catch (e) {
+    console.error("❌ PDF読み取り失敗:", e);
+    alert("PDFの読み取りに失敗しました（ファイルが破損しているか、形式不明）");
+  }
 }
 
 /** 保存ボタン */
@@ -186,62 +380,106 @@ function saveMapping() {
 {/* ========== 📑 テンプレート管理 ========== */}
 <div className="mb-10 border p-4 rounded shadow">
   <h2 className="text-lg font-bold mb-3">📑 テンプレート管理</h2>
+{/* 🔁 アップロード欄を先に表示 */}
+<div className="flex items-center gap-2 mb-4">
+  <select
+    value={tplType}
+    onChange={e => setTplType(e.target.value as any)}
+    className="border px-2 py-1 rounded"
+  >
+    <option value="発注書">発注書 (PO)</option>
+    <option value="支払明細書">支払明細書 (PS)</option>
+    <option value="請求書">請求書 (INV)</option>
+  </select>
 
-  {/* アップロード */}
-  <div className="flex items-center gap-2 mb-4">
-    <select
-      value={tplType}
-      onChange={e => setTplType(e.target.value as any)}
-      className="border px-2 py-1 rounded"
-    >
-      <option value="発注書">発注書 (PO)</option>
-      <option value="支払明細書">支払明細書 (PS)</option>
-      <option value="請求書">請求書 (INV)</option>
-    </select>
+  <input
+    type="file"
+    accept="application/pdf"
+    onChange={e => setTplFile(e.target.files?.[0] ?? null)}
+  />
 
-    <input
-      type="file"
-      accept="application/pdf"
-      onChange={e => setTplFile(e.target.files?.[0] ?? null)}
-    />
+  <button
+  className="bg-blue-600 text-white px-3 py-1 rounded disabled:opacity-50"
+  disabled={!tplFile}
+  onClick={handleUpload}  // ✅ 正しい関数名に置換
+>
+  アップロード
+</button>
+</div>
 
-    <button
-      className="bg-blue-600 text-white px-3 py-1 rounded disabled:opacity-50"
-      disabled={!tplFile}
-      onClick={async () => {
-  if (!tplFile) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    const dataUrl = reader.result as string;
-    const dateStr = new Date().toISOString().split("T")[0];
-    const key = `tpl_${tplType === "発注書" ? "PO" : tplType === "支払明細書" ? "PS" : "INV"}_${Date.now()}`;
-    
-    localStorage.setItem(key, JSON.stringify({
-      name: tplFile.name,
-      type: tplType,
-      date: dateStr,
-      dataUrl,
-    }));
+{/* 📌 帳票作成セクション */}
+<div className="flex items-center gap-4 mb-4">
+  <label className="text-sm text-gray-600">📌 帳票作成対象のドライバー：</label>
+  <select
+    className="border px-2 py-1 rounded"
+    value={selectedDriver?.uid ?? ""}
+    onChange={e => {
+      const selected = driverList.find(d => d.uid === e.target.value);
+      setSelectedDriver(selected ?? null);
+    }}
+  >
+    <option value="">-- 選択してください --</option>
+    {driverList.map(d => (
+      <option key={d.uid} value={d.uid}>
+        {d.name}（{d.contractType}）
+      </option>
+    ))}
+  </select>
 
-    setTemplates(prev => [
-      ...prev,
-      {
-        key,
-        name: tplFile.name,
-        type: tplType,
-        date: dateStr,
-        dataUrl,
-      },
-    ]);
+  {/* 種別選択 */}
+  <select
+    className="border px-2 py-1 rounded"
+    value={currentTab}
+    onChange={e => setCurrentTab(e.target.value as any)}
+  >
+    <option value="PO">発注書</option>
+    <option value="PS">支払明細書</option>
+    <option value="INV">請求書</option>
+  </select>
 
-    setTplFile(null);
-  };
-  reader.readAsDataURL(tplFile);
-}}
-    >
-      アップロード
-    </button>
-  </div>
+  {/* 🆕 作成ボタン */}
+  <button
+    className="bg-indigo-600 text-white px-4 py-1 rounded"
+    onClick={async () => {
+      if (!selectedDriver) {
+        alert("ドライバーを選択してください");
+        return;
+      }
+
+      const target = templates.find(t => t.type === (
+        currentTab === "PO" ? "発注書" :
+        currentTab === "PS" ? "支払明細書" : "請求書"
+      ));
+      if (!target) {
+        alert("該当テンプレートが見つかりません");
+        return;
+      }
+
+      const map = target.map ?? {};
+      const filledDataUrl = applyDriverMapping(
+        target.dataUrl,
+        buildFinalMapping(map, selectedDriver),
+        selectedDriver
+      );
+
+      const fileName = `${todayStr()}_${selectedDriver.name}_${target.type}.pdf`;
+      const keyPrefix = currentTab === "PO" ? "po_" : currentTab === "PS" ? "ps_" : "inv_";
+      const key = `${keyPrefix}${Date.now()}`;
+
+      localStorage.setItem(key, JSON.stringify({
+        driverName: selectedDriver.name,
+        date: todayStr(),
+        fileName,
+        dataUrl: filledDataUrl,
+      }));
+
+      alert("PDFを作成しました");
+      reload();
+    }}
+  >
+    作成
+  </button>
+</div>
 
   {/* 一覧 */}
   <table className="table-auto w-full border">
@@ -260,25 +498,39 @@ function saveMapping() {
     <td className="border px-2 py-1">{tpl.name}</td>
     <td className="border px-2 py-1">{tpl.date}</td>
     <td className="border px-2 py-1">
-      <a href={tpl.dataUrl} target="_blank" className="text-blue-600 underline mr-3">表示</a>
-      <button
-        className="text-green-600 underline mr-3"
-        onClick={() => openMappingModal(tpl.key)}
-      >
-        マッピング編集
-      </button>
-      <button
-        className="text-red-600 underline"
-        onClick={() => {
-          if (window.confirm("本当に削除しますか？")) {
-            localStorage.removeItem(tpl.key);
-            setTemplates(t => t.filter(tp => tp.key !== tpl.key));
-          }
-        }}
-      >
-        削除
-      </button>
-    </td>
+  <a
+  href={tpl.dataUrl.startsWith("data:application/pdf;base64,") ? tpl.dataUrl : "#"}
+  target="_blank"
+  rel="noopener noreferrer"
+  className="text-blue-600 underline mr-3"
+  onClick={(e) => {
+    if (!tpl.dataUrl.startsWith("data:application/pdf;base64,")) {
+      e.preventDefault();
+      alert("このテンプレートは正しいPDF形式ではありません");
+    }
+  }}
+>
+  表示
+</a>
+  <button
+    className="text-green-600 underline mr-3"
+    onClick={() => openMappingModal(tpl.key)}
+  >
+    マッピング編集
+  </button>
+  <button
+    className="text-red-600 underline mr-3"
+    onClick={() => {
+      if (window.confirm("本当に削除しますか？")) {
+        localStorage.removeItem(tpl.key);
+        setTemplates(t => t.filter(tp => tp.key !== tpl.key));
+      }
+    }}
+  >
+    削除
+  </button>
+</td>
+
   </tr>
 ))}
 {templates.length === 0 && (
@@ -392,9 +644,9 @@ function saveMapping() {
     onClick={() =>
       setSendModal({
         open: true,
-        fileName: pdf.fileName,
-        blob: dataURLtoBlob(pdf.dataUrl),
-        to: { uid: pdf.driverUid, name: pdf.driverName }, // これらはpdfオブジェクトに必要
+        fileName: `${z.ym}_${z.driverName}.zip`,
+            blob: dataURLtoBlob(z.dataUrl),
+            to: { uid: "dummy-uid", name: z.driverName }, // これらはpdfオブジェクトに必要
       })
     }
   >
