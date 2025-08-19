@@ -1,8 +1,8 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import  { useState, useRef, useEffect } from 'react';
 import { SendHorizontal, Users, Pencil, ImagePlus } from 'lucide-react';
 import useCompanyUsers from '../hooks/useCompanyUsers';
-import { db, storage } from '../firebaseClient';
+import { db, storage } from "../firebaseClient";
 import {
   collection,
   addDoc,
@@ -37,14 +37,21 @@ type Group = {
 /* ==================== コンポーネント本体 ==================== */
 export default function ChatBox() {
   /* --- ログインユーザー --- */
-  const currentUser = JSON.parse(
-    localStorage.getItem('loggedInUser') || '{}',
-  ) as {
-    uid: string;
-    name: string;
-    role: 'driver' | 'admin';
-    company: string;
-  };
+// Login.tsx で保存しているキーは "currentUser" 想定
+const stored = localStorage.getItem("currentUser");
+if (!stored) {
+  // 未ログインガード（必要ならリダイレクトでもOK）
+  throw new Error("Not logged in: currentUser not found in localStorage");
+}
+const currentUser = JSON.parse(stored) as {
+  id?: string;        // Login.tsx では id を使うことがある
+  uid?: string;       // 以前のコードの互換
+  name: string;
+  role: "driver" | "admin" | "master";
+  company: string;
+};
+// 以降は myUid を統一的に利用
+const myUid = currentUser.id ?? currentUser.uid ?? "";
 
   /* --- 各種 State --- */
   const [groups, setGroups] = useState<Group[]>([]);
@@ -67,66 +74,69 @@ export default function ChatBox() {
   const admins = companyMembers.filter(u => u.role === 'admin');
 
   /* ---------- メッセージ送信 ---------- */
-  const sendMessage = async () => {
-    if (!selectedGroup || (!input.trim() && !file)) return;
+const sendMessage = async () => {
+  if (!selectedGroup || (!input.trim() && !file)) return;
 
-    let imageUrl: string | null = null;
-    if (file) {
-      const snap = await uploadBytes(
-        ref(storage, `chat_images/${Date.now()}_${file.name}`),
-        file,
-      );
-      imageUrl = await getDownloadURL(snap.ref);
-    }
-
-    await addDoc(collection(db, 'messages'), {
-      sender: currentUser.uid,
-      text: input,
-      time: Timestamp.now(),
-      imageUrl,
-      groupId: selectedGroup.id,
-    });
-
-    await setDoc(
-      doc(db, 'groups', selectedGroup.id),
-      {
-        unreadBy: selectedGroup.members.filter(uid => uid !== currentUser.uid),
-      },
-      { merge: true },
+  let imageUrl: string | null = null;
+  if (file) {
+    const snap = await uploadBytes(
+      ref(storage, `chat_images/${Date.now()}_${file.name}`),
+      file
     );
+    imageUrl = await getDownloadURL(snap.ref);
+  }
 
-    /* 👉 ローカル即時反映 */
-    const newMsg: Message = {
-      id: Date.now().toString(), // ② 文字列統一
-      sender: currentUser.uid,
-      text: input,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      imageUrl,
-    };
+  // Firestore にメッセージを追加
+  await addDoc(collection(db, "messages"), {
+    sender: myUid,
+    text: input,
+    time: Timestamp.now(),
+    imageUrl,
+    groupId: selectedGroup.id,
+  });
 
-    const updatedChat: Group = {
-      ...selectedGroup,
-      messages: [...selectedGroup.messages, newMsg],
-      unreadBy: ['admin'],
-    };
+  // 既読管理：自分以外を未読に
+  const nextUnread = selectedGroup.members.filter((uid) => uid !== myUid);
+  await setDoc(
+    doc(db, "groups", selectedGroup.id),
+    { unreadBy: nextUnread },
+    { merge: true }
+  );
 
-    setGroups(prev => [
-      updatedChat,
-      ...prev.filter(g => g.id !== selectedGroup.id),
-    ]); // ① 安全な prev 形式
-    setSelectedGroup(updatedChat);
-    setInput('');
-    setFile(null);
+  // 👉 ローカル即時反映（落ち着いて同じロジックで）
+  const newMsg: Message = {
+    id: `${Date.now()}`, // 文字列で統一
+    sender: myUid,
+    text: input,
+    time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    imageUrl,
   };
+
+  const updatedChat: Group = {
+    ...selectedGroup,
+    messages: [...selectedGroup.messages, newMsg],
+    unreadBy: nextUnread,
+  };
+
+  setGroups((prev) => [
+    updatedChat,
+    ...prev.filter((g) => g.id !== selectedGroup.id),
+  ]);
+  setSelectedGroup(updatedChat);
+
+  setInput("");
+  setFile(null);
+};
 
   /* ---------- グループ作成 ---------- */
   const createGroup = async () => {
     const payload = {
-      name: groupNameInput || '新グループ',
-      members: [currentUser.uid, ...selectedMembers],
-      unreadBy: ['admin'],
-      company: currentUser.company,
-    };
+  name: groupNameInput || '新グループ',
+  members: [myUid, ...selectedMembers],
+  // 作成直後は「自分以外」を未読にする
+  unreadBy: [myUid, ...selectedMembers].filter(uid => uid !== myUid),
+  company: currentUser.company,
+};
     const refDoc = await addDoc(collection(db, 'groups'), payload);
     const newGroup: Group = { id: refDoc.id, ...payload, messages: [] };
 
@@ -145,11 +155,11 @@ export default function ChatBox() {
     if (!target) return;
 
     const payload = {
-      name: target.name,
-      members: [currentUser.uid, target.uid],
-      unreadBy: ['admin'],
-      company: currentUser.company,
-    };
+  name: target.name,
+  members: [myUid, target.uid],
+  unreadBy: [target.uid], // 相手だけ未読
+  company: currentUser.company,
+};
     const refDoc = await addDoc(collection(db, 'groups'), payload);
     const newGroup: Group = { id: refDoc.id, ...payload, messages: [] };
 
@@ -159,29 +169,47 @@ export default function ChatBox() {
     setSelectedPrivate('');
   };
 
-  /* ---------- Firestore 監視 ---------- */
-  /* メッセージ */
-  useEffect(() => {
-    if (!selectedGroup) return;
-    const q = query(
-      collection(db, 'messages'),
-      where('groupId', '==', selectedGroup.id),
-      orderBy('time', 'asc'),
-    );
-    const unsub = onSnapshot(q, snap => {
-      const msgs = snap.docs.map(d => ({
+  /* ---------- Firestore 監視：メッセージ ---------- */
+useEffect(() => {
+  if (!selectedGroup) return;
+
+  // 閉包のズレを防ぐため groupId をローカルに閉じ込める
+  const groupId = selectedGroup.id;
+
+  const q = query(
+    collection(db, "messages"),
+    where("groupId", "==", groupId),
+    orderBy("time", "asc")
+  );
+
+  const unsub = onSnapshot(q, (snap) => {
+    const msgs: Message[] = snap.docs.map((d) => {
+      const data = d.data() as Omit<Message, "id"> & { time?: Timestamp };
+      const timeStr =
+        data.time instanceof Timestamp
+          ? data.time.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          : String(data.time ?? "");
+      return {
         id: d.id,
-        ...(d.data() as Omit<Message, 'id'>),
-        time: (d.data().time as Timestamp)
-          ?.toDate()
-          .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      }));
-      setGroups(prev =>
-        prev.map(g => (g.id === selectedGroup.id ? { ...g, messages: msgs } : g)),
-      );
+        sender: data.sender,
+        text: data.text,
+        time: timeStr,
+        imageUrl: data.imageUrl ?? null,
+      };
     });
-    return unsub;
-  }, [selectedGroup]);
+
+    setGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, messages: msgs } : g))
+    );
+
+    // 選択中グループなら最新を入れ替え
+    if (selectedGroup?.id === groupId) {
+      setSelectedGroup((prev) => (prev ? { ...prev, messages: msgs } : prev));
+    }
+  });
+
+  return unsub;
+}, [selectedGroup?.id]); // id だけ依存にすると無駄な再購読が減る
 
   /* グループ */
   useEffect(() => {
@@ -204,10 +232,14 @@ export default function ChatBox() {
 
   /* ---------- 並び替え ---------- */
   const sortedGroups = [...groups].sort((a, b) => {
-    const aTime = a.messages[a.messages.length - 1]?.time ?? '';
-    const bTime = b.messages[b.messages.length - 1]?.time ?? '';
-    return String(bTime).localeCompare(String(aTime)); // ③ localeCompare 修正
-  });
+  // time は表示用の文字列に変換済みのため、同一日を想定した簡易比較
+  // 本格対応するなら購読時に timeMs も持たせるのがベター
+  const aMsg = a.messages[a.messages.length - 1];
+  const bMsg = b.messages[b.messages.length - 1];
+  const aKey = aMsg ? new Date(`1970-01-01T${String(aMsg.time)}:00`).getTime() : 0;
+  const bKey = bMsg ? new Date(`1970-01-01T${String(bMsg.time)}:00`).getTime() : 0;
+  return bKey - aKey;
+});
 
   /* ==================== JSX ==================== */
   return (
@@ -285,14 +317,19 @@ export default function ChatBox() {
               key={g.id}
               onClick={() => {
                 setGroups(prev =>
-                  prev.map(grp =>
-                    grp.id === g.id
-                      ? { ...grp, unreadBy: grp.unreadBy.filter(id => id !== currentUser.uid) }
-                      : grp,
-                  ),
-                );
-                setSelectedGroup(g);
-                setTempMembers(g.members);
+  prev.map(grp =>
+    grp.id === g.id
+      ? { ...grp, unreadBy: grp.unreadBy.filter(uid => uid !== myUid) }
+      : grp,
+  ),
+);
+// Firestore 側へも既読反映（任意だが推奨）
+setDoc(doc(db, 'groups', g.id), {
+  unreadBy: g.unreadBy.filter(uid => uid !== myUid),
+}, { merge: true });
+
+setSelectedGroup(g);
+setTempMembers(g.members);
               }}
               className={`p-2 rounded cursor-pointer hover:bg-green-700 ${
                 selectedGroup?.id === g.id ? 'bg-green-700' : 'bg-[#2f3e46]'
@@ -366,8 +403,8 @@ export default function ChatBox() {
               <Users size={14} />
               <span>
                 {selectedGroup.members
-                  .map(id => (id === currentUser.uid ? currentUser.name : companyMembers.find(u => u.uid === id)?.name ?? 'Unknown'))
-                  .join(', ')}
+  .map(uid => (uid === myUid ? currentUser.name : companyMembers.find(u => u.uid === uid)?.name ?? 'Unknown'))
+  .join(', ')}
               </span>
             </div>
           </header>
@@ -416,8 +453,8 @@ export default function ChatBox() {
             <div
               key={m.id}
               className={`max-w-lg p-2 px-4 rounded shadow ${
-                m.sender === currentUser.uid ? 'bg-green-100 self-end' : 'bg-white self-start'
-              }`}
+  m.sender === myUid ? 'bg-green-100 self-end' : 'bg-white self-start'
+}`}
             >
               {m.imageUrl && <img src={m.imageUrl} alt="attachment" className="w-32 rounded mb-1" />}
               <p className="text-sm whitespace-pre-line">{m.text}</p>

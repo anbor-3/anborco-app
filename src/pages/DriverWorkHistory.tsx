@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+// ✅ DriverWorkHistory.tsx - Firebaseを除去し、Neon APIに置き換える準備
+import { useEffect, useState } from "react";
 
 type HistoryEntry = {
   date: string;
@@ -11,39 +12,71 @@ type HistoryEntry = {
 const DriverWorkHistory = () => {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  const [showReSubmit, setShowReSubmit] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [reSubmitData, setReSubmitData] = useState({ fileName: "", fileData: "" });
 
   useEffect(() => {
-    const data = JSON.parse(localStorage.getItem("driverHistory") || "[]");
-    setHistory(data);
+    const loginId = localStorage.getItem("loginId") || "";
+    const company = localStorage.getItem("company") || "";
+
+    const fetchReturnedReports = async () => {
+      try {
+        const res = await fetch(`/api/dailyReports?userId=${loginId}&company=${company}`);
+        const data = await res.json();
+        setHistory(data);
+      } catch (err) {
+        console.error("日報の取得に失敗:", err);
+      }
+    };
+
+    fetchReturnedReports();
   }, []);
 
   const handleDelete = (index: number) => {
     if (!window.confirm("この日報を削除してもよろしいですか？")) return;
     const updated = [...history];
     updated.splice(index, 1);
-    localStorage.setItem("driverHistory", JSON.stringify(updated));
     setHistory(updated);
   };
 
-  const handleDownload = (base64: string, fileName: string) => {
-    const link = document.createElement("a");
-    link.href = base64;
-    link.download = fileName;
-    link.click();
+  const handleReSubmit = async () => {
+    if (selectedIndex === null) return;
+
+    const updated = [...history];
+    updated[selectedIndex] = {
+      ...updated[selectedIndex],
+      submittedAt: new Date().toLocaleString(),
+      fileName: reSubmitData.fileName,
+      fileData: reSubmitData.fileData,
+    };
+    setHistory(updated);
+    setShowReSubmit(false);
+    setSelectedIndex(null);
+    setReSubmitData({ fileName: "", fileData: "" });
+
+    try {
+      await fetch("/api/resubmitReport", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: localStorage.getItem("loginId"),
+          company: localStorage.getItem("company"),
+          date: updated[selectedIndex].date,
+          fileName: reSubmitData.fileName,
+          fileData: reSubmitData.fileData,
+        }),
+      });
+      alert("✅ 再提出が完了しました");
+    } catch (err) {
+      console.error("再提出エラー:", err);
+      alert("エラーが発生しました");
+    }
   };
 
   return (
-  <>
-    {/* タイトル（左上表示） */}
-    <div className="flex items-center space-x-2 mb-6">
-      <span className="text-2xl">📅</span>
-      <h1 className="text-2xl font-bold text-gray-800">
-        稼働履歴 <span className="text-sm text-gray-500 ml-2">- Work History -</span>
-      </h1>
-    </div>
-
-    {/* メインカード */}
     <div className="max-w-3xl mx-auto p-6 bg-white rounded shadow">
+      <h1 className="text-2xl font-bold mb-4">📅 稼働履歴</h1>
       {history.length === 0 ? (
         <p className="text-gray-500">まだ日報の提出履歴はありません。</p>
       ) : (
@@ -55,24 +88,32 @@ const DriverWorkHistory = () => {
               <p>🕐 提出時刻: {entry.submittedAt}</p>
               <p>📄 ファイル名: {entry.fileName}</p>
 
+              {entry.submittedAt === "差し戻し対象" && (
+                <button
+                  onClick={() => {
+                    setSelectedIndex(index);
+                    setShowReSubmit(true);
+                  }}
+                  className="bg-orange-500 text-white px-3 py-1 rounded hover:bg-orange-600"
+                >
+                  🔁 再提出
+                </button>
+              )}
+
               <div className="flex gap-4 mt-2">
                 <button
                   onClick={() => {
-                    const src = entry.fileData.startsWith("data:")
-                      ? entry.fileData
-                      : `data:application/pdf;base64,${entry.fileData}`;
+                    const src = entry.fileData.startsWith("data:") ? entry.fileData : `data:application/pdf;base64,${entry.fileData}`;
                     setPreviewSrc(src);
                   }}
-                  className="bg-green-500 text-white px-3 py-1 rounded shadow hover:bg-green-600"
+                  className="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600"
                 >
                   📄 プレビュー
                 </button>
 
                 <button
                   onClick={() => {
-                    const base64 = entry.fileData.startsWith("data:")
-                      ? entry.fileData
-                      : `data:application/pdf;base64,${entry.fileData}`;
+                    const base64 = entry.fileData.startsWith("data:") ? entry.fileData : `data:application/pdf;base64,${entry.fileData}`;
                     const link = document.createElement("a");
                     link.href = base64;
                     link.download = entry.fileName;
@@ -80,14 +121,14 @@ const DriverWorkHistory = () => {
                     link.click();
                     document.body.removeChild(link);
                   }}
-                  className="bg-blue-500 text-white px-3 py-1 rounded shadow hover:bg-blue-600"
+                  className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
                 >
                   ⬇ ダウンロード
                 </button>
 
                 <button
                   onClick={() => handleDelete(index)}
-                  className="bg-red-500 text-white px-3 py-1 rounded shadow hover:bg-red-600"
+                  className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600"
                 >
                   🗑 削除
                 </button>
@@ -97,26 +138,51 @@ const DriverWorkHistory = () => {
         </ul>
       )}
 
-      {/* プレビュー用モーダル */}
       {previewSrc && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
           <div className="bg-white p-4 rounded-lg shadow-lg w-full max-w-4xl h-[80vh] flex flex-col">
             <div className="flex justify-between items-center mb-2">
               <h2 className="text-lg font-semibold">📄 日報プレビュー</h2>
-              <button
-                onClick={() => setPreviewSrc(null)}
-                className="text-red-500 hover:underline"
-              >
-                閉じる
-              </button>
+              <button onClick={() => setPreviewSrc(null)} className="text-red-500 hover:underline">閉じる</button>
             </div>
             <iframe src={previewSrc} className="flex-1 w-full" />
           </div>
         </div>
       )}
+
+      {showReSubmit && selectedIndex !== null && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+          <div className="bg-white p-6 rounded shadow-lg w-full max-w-xl space-y-4">
+            <h2 className="text-lg font-semibold">📤 再提出日報</h2>
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                  setReSubmitData({
+                    fileName: file.name,
+                    fileData: reader.result as string,
+                  });
+                };
+                reader.readAsDataURL(file);
+              }}
+            />
+            <div className="flex justify-end space-x-2">
+              <button onClick={() => { setShowReSubmit(false); setSelectedIndex(null); setReSubmitData({ fileName: "", fileData: "" }); }} className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">
+                キャンセル
+              </button>
+              <button onClick={handleReSubmit} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+                再提出
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-  </>
-);
+  );
 };
 
 export default DriverWorkHistory;

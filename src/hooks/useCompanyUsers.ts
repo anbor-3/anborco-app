@@ -1,7 +1,5 @@
 // hooks/useCompanyUsers.ts
 import { useEffect, useState } from "react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
-import { db } from "../firebaseClient";
 
 type User = {
   uid: string;
@@ -17,18 +15,20 @@ export default function useCompanyUsers(company: string) {
   useEffect(() => {
     if (!company) return;
 
-    const q = query(collection(db, "users"), where("company", "==", company));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map(doc => ({
-        uid: doc.id,
-        ...doc.data(),
-      })) as User[];
+    const fetchUsers = async () => {
+      try {
+        const res = await fetch(`/api/users?company=${company}`);
+        if (!res.ok) throw new Error("Failed to fetch users");
+        const data = await res.json();
+        setUsers(data);
+      } catch (error) {
+        console.error("❌ ユーザー取得エラー:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-      setUsers(list);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
+    fetchUsers();
   }, [company]);
 
   return { users, loading };

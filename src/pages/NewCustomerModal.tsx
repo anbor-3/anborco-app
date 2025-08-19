@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import  { useState } from "react";
 import Select from "react-select"; // ✅ react-selectを追加
 
 export type Customer = {
@@ -29,7 +29,7 @@ export type Customer = {
 type Props = {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (rec: Customer) => void;
+  onSave: (rec: Omit<Customer, "id" | "uid" | "upw">) => void;
   pricingPlans: { id: string; name: string }[]; // ✅ 料金プランデータ
 };
 
@@ -94,9 +94,10 @@ export default function NewCustomerModal({ isOpen, onClose, onSave, pricingPlans
                 label: pricingPlans.find(p => p.id === id)?.name || ""
               }))}
               onChange={(selected) => {
-                const values = selected.map(item => item.value);
-                setForm({ ...form, selectedPlans: values });
-              }}
+   const arr = Array.isArray(selected) ? selected : [];
+   const values = arr.map(item => item.value);
+   setForm({ ...form, selectedPlans: values });
+ }}
             />
           </label>
 
@@ -201,14 +202,12 @@ export default function NewCustomerModal({ isOpen, onClose, onSave, pricingPlans
           <button
             className="px-4 py-1 bg-green-600 text-white rounded"
             onClick={() => {
-              const rec: Customer = {
-                id: Date.now().toString(),
-                uid: genRandom(6),
-                upw: genRandom(10),
-                ...form,
-                plan: form.selectedPlans[0] || "" // ✅ 旧planフィールドに最初のプランをセット
-              };
-              onSave(rec);
+              // ここでは入力データだけ渡す（id/uid/upw は親で付与）
+              onSave({
+               ...form,
+               // 互換のため旧 plan フィールドにも先頭プランを入れておく
+               plan: form.selectedPlans[0] || ""
+             });
               onClose();
             }}
           >

@@ -1,6 +1,68 @@
-import  { useState, useEffect } from "react";
-const genRandom = (len = 6) =>
+// ✅ import は一番上にまとめてください
+import type React from "react";
+import { useState, useEffect } from "react";
+import { getAuth } from "firebase/auth";
+
+const debounce = <T extends (...args: any[]) => any>(fn: T, delay = 500) => {
+  let t: number | undefined;
+  return (...args: Parameters<T>) => {
+    if (t) window.clearTimeout(t);
+    t = window.setTimeout(() => fn(...args), delay);
+  };
+};
+
+// ✅ 関数定義は壊れてはいけません（ここが重要！！）
+const genRandom = (len = 6): string =>
   Math.random().toString(36).slice(-len);
+
+// ✅ Firestoreからドライバー一覧を取得する関数（あとで使います）
+export const fetchDrivers = async (company: string): Promise<Driver[]> => {
+  try {
+    const auth = getAuth();
+    const idToken = await auth.currentUser?.getIdToken();
+    if (!idToken) throw new Error("未ログイン");
+
+    // company クエリは互換のため残す（本番はトークンの companyId を使用）
+    const res = await fetch(`/api/drivers?company=${company}`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (!res.ok) throw new Error("Fetch failed");
+    const drivers = await res.json();
+    return drivers;
+  } catch (error) {
+    console.error("❌ ドライバー取得失敗:", error);
+    return [];
+  }
+};
+
+// ✅ Neonに保存する共通関数（Fileは送らない）
+const persist = async (company: string, drivers: Driver[]) => {
+  const auth = getAuth();
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) {
+    alert("未ログインです。再ログインしてください。");
+    throw new Error("no token");
+  }
+
+  const sanitized = drivers.map(({ attachments, licenseFiles, ...rest }) => rest);
+  try {
+    const res = await fetch("/api/drivers/save", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,     // ← 追加
+      },
+      body: JSON.stringify({ company, drivers: sanitized }),
+    });
+    if (!res.ok) throw new Error(`Save failed: ${res.status}`);
+  } catch (e) {
+    console.error("❌ 保存に失敗:", e);
+    alert("保存に失敗しました。ネットワークをご確認ください。");
+    throw e;
+  }
+};
+
+
 interface Notification {
   id: string;
   message: string;
@@ -33,77 +95,27 @@ export interface Driver {
   [key: string]: any;
 }
 
-const initialDrivers: Driver[] = [
-  {
-     id:       genRandom(5),   // 例：k3x9q
-  uid: "driver001",
-  loginId: "driver0001",  // ✅追加
-  password: genRandom(8),
-  name: "",
-  contractType: "社員",
-  company: "",
-  phone: "",
-  address: "",
-  mail: "",
-  birthday: "",
-  licenseFiles: [],
-  licenseExpiry: "",
-  attachments: [],
-  hidden: false,
-  status: "予定なし",
-  isWorking: false,
-  resting:   false,
-  shiftStart: "09:00",
-  shiftEnd:   "18:00",
-  },
-  {
-    uid: "driver002",
-    loginId: "driver0002",
-    password: genRandom(8),
-    id: "driver002",
-    name: "鈴木花子",
-    contractType: "委託",
-    invoiceNo: "T1234567890123",
-    company: "大阪物流センター",
-    phone: "080-1111-2222",
-    address: "大阪府大阪市中央区4-5-6",
-    mail: "hanako@example.com",
-    birthday: "1990-05-10",
-    licenseFiles: [],
-    licenseExpiry: "2024-08-15",
-    attachments: [],
-    hidden: false,
-    status: "予定なし",
-isWorking: false,
-resting: false,
-shiftStart: "09:00",
-shiftEnd: "18:00",
-  },
-  // 以下同様にあと8名追加予定
-];
-
 const AdminDriverManager = () => {
+  // ✅ 入力の連打をまとめて保存（600ms）
+  const persistDebounced = debounce((company: string, drivers: Driver[]) => {
+    persist(company, drivers);
+  }, 600);
   const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
   const company = admin.company || "";
-  const storageKey = `driverList_${company}`;
   const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [customFields, setCustomFields] = useState<string[]>([]);
 
 useEffect(() => {
-  const saved = localStorage.getItem(storageKey);
-  if (saved) {
-    setDrivers(JSON.parse(saved)); // ✅ 自社データのみ
-  } else {
-    // ✅ 初回データに company を付与
-    const updatedInitial = initialDrivers.map((d) => ({ ...d, company }));
-    setDrivers(updatedInitial);
-    localStorage.setItem(storageKey, JSON.stringify(updatedInitial));
-  }
+  const loadDrivers = async () => {
+    const fetched = await fetchDrivers(company); // ✅ Neon API から取得
+    setDrivers(fetched);
 
-  // ✅ カスタムフィールド復元
-  const storedCustom = localStorage.getItem("driverCustomFields");
-  if (storedCustom) {
-    setCustomFields(JSON.parse(storedCustom));
-  }
+    const storedCustom = localStorage.getItem("driverCustomFields");
+    if (storedCustom) {
+      setCustomFields(JSON.parse(storedCustom));
+    }
+  };
+  loadDrivers();
 }, []);
 
 const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -178,15 +190,7 @@ useEffect(() => {
   
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [expandedRowIndex, setExpandedRowIndex] = useState<number | null>(null);
-  const [customFields, setCustomFields] = useState<string[]>([]);
-
-useEffect(() => {
-  const stored = localStorage.getItem("driverCustomFields");
-  if (stored) {
-    setCustomFields(JSON.parse(stored));
-  }
-}, []);
-
+  
     const handleEdit = (index: number) => {
     setEditingIndex(index);
     setExpandedRowIndex(index);
@@ -197,26 +201,28 @@ useEffect(() => {
     setExpandedRowIndex(null);
   };
 
-  const handleDelete = (index: number) => {
-  if (window.confirm("本当にこのドライバーを削除しますか？")) {
-    const updated = [...drivers];
-    updated.splice(index, 1);
-    setDrivers(updated);
-    localStorage.setItem(storageKey, JSON.stringify(updated));
-  }
+  const handleDelete = async (index: number) => {
+  if (!window.confirm("本当にこのドライバーを削除しますか？")) return;
+
+  const updated = [...drivers];
+  updated.splice(index, 1);
+  setDrivers(updated);
+
+  await persist(company, updated);
 };
 
   const handleChange = (index: number, field: keyof Driver, value: any) => {
   const updated = [...drivers];
   (updated[index] as any)[field] = value;
   setDrivers(updated);
-  localStorage.setItem(storageKey, JSON.stringify(updated));
+
+  // すぐに await しない（タイプが止まったら保存）
+  persistDebounced(company, updated);
 };
 
-  const handleAddRow = () => {
+  const handleAddRow = async () => {
   const adminCompany = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}").company || "";
 
-  // ✅ ログインIDとパスワードを生成
   const newLoginId = `driver${String(drivers.length + 1).padStart(4, "0")}`;
   const newPassword = genRandom(8);
 
@@ -225,8 +231,8 @@ useEffect(() => {
     {
       id: `driver${String(drivers.length + 1).padStart(4, "0")}`,
       uid: `uid${Date.now()}`,
-      loginId: `driver${String(drivers.length + 1).padStart(4, "0")}`,
-      password: newPassword, // ✅追加
+      loginId: newLoginId,
+      password: newPassword,
       name: "",
       contractType: "社員",
       invoiceNo: "",
@@ -246,51 +252,56 @@ useEffect(() => {
       shiftEnd: "18:00",
     },
   ];
+
   setDrivers(updated);
-  localStorage.setItem(storageKey, JSON.stringify(updated));
+
+  await persist(company, updated);
+
   setEditingIndex(drivers.length);
   setExpandedRowIndex(drivers.length);
-alert(`✅ ドライバーが追加されました\nログインID: ${newLoginId}\nパスワード: ${newPassword}`);
+  alert(`✅ ドライバーが追加されました\nログインID: ${newLoginId}\nパスワード: ${newPassword}`);
 };
-const handleFileUpload = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
+
+const handleFileUpload = async (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
   const files = e.target.files;
   if (!files) return;
 
   const newFiles = Array.from(files);
-  setDrivers(prev => {
-    const updated = [...prev];
-    const current = updated[index];
 
-    const existingFiles = current.attachments || [];
-    const filteredNewFiles = newFiles.filter(newFile =>
-      !existingFiles.some(existing => existing.name === newFile.name && existing.size === newFile.size)
-    );
+  const updated = [...drivers];
+  const current = { ...updated[index] };
+  const existingFiles = current.attachments || [];
 
-    if (existingFiles.length + filteredNewFiles.length > 10) {
-      alert("最大10ファイルまで添付できます。");
-      return prev;
-    }
+  const filteredNewFiles = newFiles.filter(newFile =>
+    !existingFiles.some(existing => existing.name === newFile.name && existing.size === newFile.size)
+  );
 
-    current.attachments = [...existingFiles, ...filteredNewFiles];
-    updated[index] = current;
+  if (existingFiles.length + filteredNewFiles.length > 10) {
+    alert("最大10ファイルまで添付できます。");
+    return;
+  }
 
-    // ✅ この位置で保存
-    localStorage.setItem(storageKey, JSON.stringify(updated));
+  current.attachments = [...existingFiles, ...filteredNewFiles];
+  updated[index] = current;
 
-    return updated;
-  });
+  setDrivers(updated);
+
+  await persist(company, updated);
 
   e.target.value = "";
 };
 
-  const handleFileDelete = (rowIndex: number, fileIndex: number) => {
-    const updatedFiles = [...(drivers[rowIndex].attachments || [])];
-    updatedFiles.splice(fileIndex, 1);
-    const updated = [...drivers];
-    updated[rowIndex].attachments = updatedFiles;
-    setDrivers(updated);
-    localStorage.setItem(storageKey, JSON.stringify(updated));
-  };
+  const handleFileDelete = async (rowIndex: number, fileIndex: number) => {
+  const updatedFiles = [...(drivers[rowIndex].attachments || [])];
+  updatedFiles.splice(fileIndex, 1);
+
+  const updated = [...drivers];
+  updated[rowIndex] = { ...updated[rowIndex], attachments: updatedFiles };
+
+  setDrivers(updated);
+
+  await persist(company, updated);
+};
 const getStatusColor = (status: string) => {
   switch (status) {
     case "予定なし": return "bg-gray-400 text-white";

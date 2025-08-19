@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+import { createUserWithEmailAndPassword } from "firebase/auth";
+import { auth } from "../firebaseClient"; // 既存の初期化ファイルから
 
 /** 型定義  */
 type AdminUser = {
@@ -12,6 +14,26 @@ type AdminUser = {
   attachments: { name: string; dataUrl: string }[];
   [key: string]: any; // カスタム項目のための動的プロパティ
 };
+
+const generateUniqueUid = (existing: AdminUser[]) => {
+   // 会社横断でユニークであればOK、簡易にタイムスタンプ＋連番
+   const base = `adm${Date.now()}`;
+   let n = 0;
+   let candidate = `${base}`;
+   const set = new Set(existing.map(a => a.uid));
+   while (set.has(candidate)) {
+     n++;
+     candidate = `${base}_${n}`;
+   }
+   return candidate;
+ };
+
+ // Firebase Auth に本当にユーザーを作成
+ const createAdminAuth = async (loginId: string, password: string) => {
+   const email = `${loginId}@anborco.jp`; // 画面は loginId、Auth は email 運用
+   await createUserWithEmailAndPassword(auth, email, password);
+   return { email };
+ };
 
 const generateLoginCredentials = (existingAdmins: AdminUser[]) => {
   const existingIds = existingAdmins.map((a) => a.loginId);
@@ -29,6 +51,7 @@ const generateLoginCredentials = (existingAdmins: AdminUser[]) => {
 };
 
 const AdminManager = () => {
+  const ADMIN_STORAGE_KEY = "adminMaster";
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [editRowId, setEditRowId] = useState<number | null>(null);
@@ -48,20 +71,27 @@ const AdminManager = () => {
   const [draft, setDraft] = useState<AdminUser>(emptyAdmin);
 
   useEffect(() => {
-    const raw = localStorage.getItem("customerMaster");
-    if (raw) {
-      const customers = JSON.parse(raw);
+    const rawAdmins = localStorage.getItem(ADMIN_STORAGE_KEY);
+  if (rawAdmins) {
+    setAdmins(JSON.parse(rawAdmins));
+  } else {
+    // 初回だけ顧客マスターからサンプル移行（任意）
+    const rawCustomers = localStorage.getItem("customerMaster");
+    if (rawCustomers) {
+      const customers = JSON.parse(rawCustomers);
       const formatted: AdminUser[] = customers.map((c: any, index: number) => ({
         id: index,
-        company: c.company,
-        contactPerson: c.contactPerson,
-        phone: c.phone ?? "",
-        uid: c.uid,
-        attachments: c.attachments ?? [],
-        ...c, // カスタム項目も含める
+        company: c.company || "",
+        contactPerson: c.contactPerson || "",
+        phone: c.contactPhone ?? "",
+        uid: c.uid || "",
+        loginId: "",  // 後で発番
+        password: "", // 後で発番
+        attachments: [],
       }));
-      setAdmins(formatted);
+      persist(formatted);
     }
+  }
 
     const savedFields = localStorage.getItem("adminCustomFields");
     if (savedFields) {
@@ -69,25 +99,37 @@ const AdminManager = () => {
     }
   }, []);
 
-  const persist = (next: AdminUser[]) => {
-    localStorage.setItem("customerMaster", JSON.stringify(next));
-    setAdmins(next);
+   const persist = (next: AdminUser[]) => {
+   localStorage.setItem(ADMIN_STORAGE_KEY, JSON.stringify(next));
+   setAdmins(next);
+ };
+
+  // ここが“本番仕様”の追加処理（失敗ハンドリング＋平文PWを保存しない）
+  const handleAdd = async () => {
+    const { loginId, password } = generateLoginCredentials(admins);
+    try {
+      // 認証基盤にユーザー作成（例: Firebase Auth）
+      await createAdminAuth(loginId, password);
+    } catch (e) {
+      console.error("Auth user create failed:", e);
+      alert("認証ユーザーの作成に失敗しました。ネットワークまたは設定をご確認ください。");
+      return;
+    }
+    // 平文パスワードは保存しない（初回のみアラート表示）
+    const next = [
+      ...admins,
+      { ...draft, id: admins.length, loginId, password: "" }
+    ];
+    persist(next);
+   alert(
+      `✅ 管理者が追加されました\n` +
+      `ログインID: ${loginId}\n` +
+      `パスワード: ${password}\n\n` +
+      `※このパスワードは今だけ表示。画面やDBには保存しません。`
+    );
+    setDraft(emptyAdmin);
+    setIsAdding(false);
   };
-
-  const handleAdd = () => {
-  const { loginId, password } = generateLoginCredentials(admins); // ✅追加
-  const next = [
-    ...admins,
-    { ...draft, id: admins.length, loginId, password } // ✅IDとパスワードを追加
-  ];
-  persist(next);
-
-  // ✅ 登録後に表示
-  alert(`✅ 管理者が追加されました\nログインID: ${loginId}\nパスワード: ${password}`);
-
-  setDraft(emptyAdmin);
-  setIsAdding(false);
-};
 
   const startEdit = (row: AdminUser) => {
     setDraft({ ...row });
@@ -152,7 +194,7 @@ const AdminManager = () => {
         <td className="border px-3 py-2">{isEdit ? (<input className="w-full border px-2 py-1" value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />) : admin.phone}</td>
         <td className="border px-3 py-2">{admin.uid}</td>
         <td className="border px-3 py-2">{admin.loginId}</td>
-        <td className="border px-3 py-2">{admin.password}</td>
+        <td className="border px-3 py-2">••••••</td>
         {customFields.map((field, idx) => (
           <td key={idx} className="border px-3 py-2">
             {isEdit ? (
@@ -233,7 +275,7 @@ const AdminManager = () => {
             <th className="border px-3 py-2">電話番号</th>
             <th className="border px-3 py-2">UID</th>
             <th className="border px-3 py-2">ログインID</th>
-            <th className="border px-3 py-2">パスワード</th>
+            <th className="border px-3 py-2">パスワード（非表示）</th>
             {customFields.map((field, idx) => (
               <th key={idx} className="border px-3 py-2">{field}</th>
             ))}

@@ -1,18 +1,58 @@
-import React, { useEffect, useState } from "react";
+"use client";
+import  { useEffect, useState } from "react";
+
+const API_BASE =
+  (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_BASE_PATH)
+    ? `${(process as any).env.NEXT_PUBLIC_BASE_PATH}/api`
+    : "/api";
+
+// ユーティリティ
+const toMs = (s?: string) => (s ? new Date(s).getTime() : 0);
+
+// JSTで短い日付表示
+const fmtJST = (iso?: string) => {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "-";
+  return new Intl.DateTimeFormat("ja-JP", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: "Asia/Tokyo",
+  }).format(d);
+};
+
+// ★ 追加: JSON専用フェッチ（HTMLが返ってきたら本文先頭をエラー表示）
+async function safeFetchJSON(input: RequestInfo | URL, init?: RequestInit) {
+  const res = await fetch(input, init);
+  const ct = res.headers.get("content-type") || "";
+  const body = await res.text(); // 先にテキストで読む（jsonに失敗したとき中身を出せる）
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText} : ${body.slice(0, 200)}`);
+  }
+  if (!/application\/(problem\+)?json/i.test(ct)) {
+    throw new Error(`非JSON応答（content-type: ${ct || "unknown"}）: ${body.slice(0, 200)}`);
+  }
+  try {
+    return JSON.parse(body);
+  } catch (e) {
+    throw new Error(`JSONパース失敗: ${String(e)} : ${body.slice(0, 200)}`);
+  }
+}
 
 // 通知の型定義
 interface Notification {
-  id: number;
+  id: string; // UUID（サーバ発行）
   type: "warning" | "report" | "shift";
   category: string;
   message: string;
-  target: string;
-  timestamp: string;
+  target: string | null;
+  createdAt: string; // ISO
   read: boolean;
 }
 
 // ✅ 色分類ロジック
-const getColorClass = (type: string) => {
+const getColorClass = (type: Notification["type"]) => {
   switch (type) {
     case "warning":
       return "text-red-500 font-semibold";
@@ -28,19 +68,24 @@ const getColorClass = (type: string) => {
 // ✅ 対象の自動判定（ドライバー・車両）
 const normalize = (str: string) => str.replace(/\s+/g, "").replace(/　/g, "");
 
+// ★ 追加：localStorage JSONが壊れていても落ちないようにする
+const safeParse = <T,>(s: string | null, fallback: T): T => {
+  try { return s ? (JSON.parse(s) as T) : fallback; } catch { return fallback; }
+};
+
 const getMatchedTarget = (message: string): string => {
-  const drivers = JSON.parse(localStorage.getItem("driverList") || "[]");
-  const vehicles = JSON.parse(localStorage.getItem("vehicleList") || "[]");
+  const drivers = safeParse<any[]>(localStorage.getItem("driverList"), []);
+  const vehicles = safeParse<any[]>(localStorage.getItem("vehicleList"), []);
   const normalizedMsg = normalize(message);
 
   for (const d of drivers) {
-    if (d.name && normalizedMsg.includes(normalize(d.name))) {
+    if (d?.name && normalizedMsg.includes(normalize(String(d.name)))) {
       return d.name;
     }
   }
 
   for (const v of vehicles) {
-    if (v.number && normalizedMsg.includes(normalize(v.number))) {
+    if (v?.number && normalizedMsg.includes(normalize(String(v.number)))) {
       return v.number;
     }
   }
@@ -50,126 +95,90 @@ const getMatchedTarget = (message: string): string => {
 
 const AdminNotificationList = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-  // ✅ 1. 先に driverList / vehicleList をセットしておく
-  if (!localStorage.getItem("driverList")) {
-    localStorage.setItem("driverList", JSON.stringify([
-      { id: "driver001", name: "佐藤太郎" },
-      { id: "driver002", name: "鈴木花子" }
-    ]));
-  }
+  // 未読件数
+  const unreadCount = notifications.filter(n => !n.read).length;
 
-  if (!localStorage.getItem("vehicleList")) {
-    localStorage.setItem("vehicleList", JSON.stringify([
-      { id: "vehicle001", number: "品川 500 あ 12-34" },
-      { id: "vehicle002", number: "多摩 300 い 45-67" }
-    ]));
-  }
-
-  // ✅ 2. 通知の読み込みと免許証期限通知の両方を必ず行うように整理
-const saved = localStorage.getItem("adminNotifications");
-let currentNotifications: Notification[] = [];
-
-if (saved) {
-  currentNotifications = JSON.parse(saved).map((n: any) => ({
-    ...n,
-    target: n.target || getMatchedTarget(n.message),
-  }));
-} else {
-  // 初期通知（初回だけ）
-  currentNotifications = [
-    {
-      id: 1,
-      type: "report",
-      category: "日報提出",
-      message: "佐藤太郎さんが6/17の日報を提出しました",
-      target: "",
-      timestamp: new Date().toLocaleString("ja-JP"),
-      read: false,
-    },
-    {
-      id: 2,
-      type: "warning",
-      category: "免許証期限警告",
-      message: "鈴木花子さんの免許証が期限切れ間近です",
-      target: "",
-      timestamp: new Date().toLocaleString("ja-JP"),
-      read: false,
-    },
-    {
-      id: 3,
-      type: "warning",
-      category: "車検期限警告",
-      message: "品川 500 あ 12-34 の車検がまもなく切れます",
-      target: "",
-      timestamp: new Date().toLocaleString("ja-JP"),
-      read: true,
-    },
-  ].map(n => ({
-    ...n,
-    target: getMatchedTarget(n.message),
-  }));
-}
-
-// 🔧 有効期限通知対象日
-const notifyDays = [30, 20, 10, 5, 4, 3, 2, 1, 0];
-
-// 🧑‍ Driver一覧を取得
-const drivers = JSON.parse(localStorage.getItem("driverList") || "[]");
-const today = new Date();
-
-// 🔁 各ドライバーの免許証期限をチェック
-drivers.forEach((driver: any) => {
-  if (!driver.licenseExpiry) return;
-
-  const expiryDate = new Date(driver.licenseExpiry);
-  const diffDays = Math.floor((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-
-  if (notifyDays.includes(diffDays)) {
-    const message = `${driver.name}さんの免許証があと${diffDays === 0 ? '本日' : diffDays + '日'}で期限切れです`;
-
-    const alreadyExists = currentNotifications.some((n: any) => n.message === message);
-
-    if (!alreadyExists) {
-      const newNotification: Notification = {
-        id: Date.now(), // ユニークID（タイムスタンプ）
-        type: "warning",
-        category: "免許証期限警告",
-        message,
-        target: driver.name,
-        timestamp: new Date().toLocaleString("ja-JP"),
-        read: false,
-      };
-
-      currentNotifications.push(newNotification);
+  // 一覧取得（共通化＆日付降順）
+  const reload = async (ac?: AbortController) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data: Notification[] = await safeFetchJSON(`${API_BASE}/notifications`, {
+        credentials: "include",
+        signal: ac?.signal,
+        headers: { Accept: "application/json" },
+      });
+      data.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+      setNotifications(data);
+    } catch (e: any) {
+      if (e?.name !== "AbortError") {
+        console.error(e);
+        setError(e?.message || "通知の取得に失敗しました");
+      }
+    } finally {
+      setLoading(false);
     }
-  }
-});
-// ✅ 最終保存・反映
-setNotifications(currentNotifications);
-localStorage.setItem("adminNotifications", JSON.stringify(currentNotifications));
-}, []);
-
-  const markAsRead = (id: number) => {
-    const updated = notifications.map((n) =>
-      n.id === id ? { ...n, read: true } : n
-    );
-    setNotifications(updated);
-    localStorage.setItem("adminNotifications", JSON.stringify(updated));
   };
 
-  const deleteNotification = (id: number) => {
-    const updated = notifications.filter((n) => n.id !== id);
-    setNotifications(updated);
-    localStorage.setItem("adminNotifications", JSON.stringify(updated));
+  // 初回取得 + 15秒ポーリング
+  useEffect(() => {
+    const ac = new AbortController();
+    reload(ac);
+    const timer = setInterval(() => reload(), 15_000);
+    return () => { ac.abort(); clearInterval(timer); };
+  }, []);
+
+  const markAsRead = async (id: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/notifications/${id}/read`, {
+        method: "POST",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) throw new Error();
+      await reload(); // 即時反映
+    } catch {
+      alert("既読に失敗しました");
+    }
+  };
+
+  const deleteNotification = async (id: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/notifications/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) throw new Error();
+      await reload(); // 即時反映
+    } catch {
+      alert("削除に失敗しました");
+    }
   };
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4 flex items-center gap-2">
-  📢 通知一覧 <span className="text-base text-gray-600">-Notification List-</span>
-</h1>
+      <h1 className="text-2xl font-bold mb-4 flex items-center gap-3">
+        📢 通知一覧 <span className="text-base text-gray-600">-Notification List-</span>
+        {/* 未読バッジ */}
+        <span className="ml-2 inline-flex items-center justify-center rounded-full bg-red-600 text-white text-xs px-2 py-0.5">
+          未読 {unreadCount}
+        </span>
+        {/* 手動再読込 */}
+        <button
+          onClick={() => reload()}
+          className="ml-auto text-sm px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
+        >
+          再読込
+        </button>
+      </h1>
+
+      {loading && <div className="mb-3 text-gray-600">読み込み中...</div>}
+      {error && <div className="mb-3 text-red-600">{error}</div>}
+
       <table className="w-full table-fixed border border-gray-300 shadow rounded-lg overflow-hidden text-right">
         <thead>
           <tr className="bg-blue-200 text-gray-800 text-sm font-semibold border border-gray-300">
@@ -181,7 +190,7 @@ localStorage.setItem("adminNotifications", JSON.stringify(currentNotifications))
           </tr>
         </thead>
         <tbody>
-          {notifications.length === 0 ? (
+          {!loading && notifications.length === 0 ? (
             <tr>
               <td colSpan={5} className="text-center py-4 text-gray-500">
                 通知はありません。
@@ -191,16 +200,16 @@ localStorage.setItem("adminNotifications", JSON.stringify(currentNotifications))
             notifications.map((n) => (
               <tr
                 key={n.id}
-                className={`${
-                  n.read ? "bg-gray-100" : "bg-yellow-50 font-bold"
-                } hover:bg-gray-200`}
+                className={`${n.read ? "bg-gray-100" : "bg-yellow-50 font-bold"} hover:bg-gray-200`}
               >
                 <td className="border px-3 py-2 text-center">{n.category}</td>
                 <td className="border px-3 py-2 text-right font-medium text-gray-800">
-  {n.target && n.target !== "対象不明" ? n.target : "（不明）"}
-</td>
+                  {n.target && n.target !== "対象不明" ? n.target : getMatchedTarget(n.message)}
+                </td>
                 <td className={`border px-3 py-2 text-right ${getColorClass(n.type)}`}>{n.message}</td>
-                <td className="border px-3 py-2 text-sm text-gray-600 text-right">{n.timestamp}</td>
+                <td className="border px-3 py-2 text-sm text-gray-600 text-right">
+                  {fmtJST(n.createdAt)}
+                </td>
                 <td className="border px-3 py-2 space-x-2 text-right">
                   {!n.read && (
                     <button

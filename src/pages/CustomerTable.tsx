@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import NewCustomerModal, { Customer } from "../pages/NewCustomerModal";
 import { createCustomerWithAuth } from "../utils/createCustomerWithAuth";
 import Select from "react-select";
@@ -107,7 +107,7 @@ const getCurrentUserCount = (companyName: string) => {
       <NewCustomerModal
   isOpen={showModal}
   onClose={() => setShowModal(false)}
-  onSave={(rec) => {
+  onSave={async (rec) => {
     const currentUsers = getCurrentUserCount(rec.company);
 
     let maxAllowed = 0;
@@ -123,28 +123,32 @@ const getCurrentUserCount = (companyName: string) => {
       return;
     }
 
-    // ✅ ランダムIDとパスワードを生成
-    const uid = `cust${Date.now()}`;
-    const upw = Math.random().toString(36).slice(-8);
+   // ✅ 認証情報を発番（あなたの関数シグネチャに合わせる）
+     const auth = await createCustomerWithAuth(rec.company, rec.contactPerson);
+     // email→uid、password→upw として格納
+     const withAuth: Customer = {
+       id: Date.now().toString(),
+       uid: auth.email,
+       upw: auth.password,
+       ...rec,
+       // 旧plan互換: 先頭プランをplanに入れておく
+       plan: rec.selectedPlans[0] || ""
+     };
 
-    const withAuth = {
-      ...rec,
-      id: Date.now().toString(),
-      uid,
-      upw,
-    };
+// ✅ ローカル保存
+     save([...customers, withAuth]);
+     // ✅ サーバ保存（使うなら関数を用意）
+     // await persistCustomers(withAuth);
 
-    // ✅ 保存
-    save([...customers, withAuth]);
+     // ✅ 発行情報の確認表示
+     alert(
+       `✅ 顧客アカウントを作成しました\n` +
+       `ログインID: ${withAuth.uid}\n` +
+       `パスワード: ${withAuth.upw}`
+     );
 
-    // ✅ 発行情報を表示
-    alert(
-      `✅ 顧客アカウントを作成しました\n` +
-      `ログインID: ${uid}\n` +
-      `パスワード: ${upw}`
-    );
+     setShowModal(false);
 
-    setShowModal(false);
   }}
   pricingPlans={pricingPlans}
 />
@@ -247,9 +251,10 @@ const getCurrentUserCount = (companyName: string) => {
   label: pricingPlans.find(p => p.id === id)?.name || ""
 }))}
     onChange={(selected) => {
-      const values = selected.map((item) => item.value);
-      setDraft({ ...draft, selectedPlans: values });
-    }}
+   const arr = Array.isArray(selected) ? selected : [];
+   const values = arr.map((item) => item.value);
+   setDraft({ ...draft, selectedPlans: values });
+ }}
   />
 
     ) : key === "startDate" || key === "endDate" ? (
@@ -332,13 +337,11 @@ const getCurrentUserCount = (companyName: string) => {
 
           <p className="mt-1 text-sm">
             <strong>契約書 PDF：</strong>
-            <a
-              href={c.note}
-              target="_blank"
-              className="text-blue-600 underline ml-1"
-            >
-              表示
-            </a>
+            {c.note && (
+   <a href={c.note} target="_blank" className="text-blue-600 underline ml-1" rel="noopener noreferrer">
+     表示
+   </a>
+ )}
           </p>
 
           {/* 編集／削除ボタン */}

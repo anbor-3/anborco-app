@@ -4,6 +4,35 @@ import PS_PDF  from "@/assets/支払明細書テンプレート.pdf?url";
 import INV_PDF from "@/assets/請求書テンプレート.pdf?url";
 import ConfirmSendModal from "./components/ConfirmSendModal";
 import type { Driver } from "./AdminDriverManager";
+import { getAuth } from "firebase/auth"; // ★追加
+
+// ---- API helpers（Authトークン付き）----
+async function apiGet<T>(path: string): Promise<T> {
+  const idToken = await getAuth().currentUser?.getIdToken();
+  if (!idToken) throw new Error("未ログインです");
+  const res = await fetch(path, { headers: { Authorization: `Bearer ${idToken}` } });
+  if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`);
+  return res.json();
+}
+
+async function apiPost<T>(path: string, body: any): Promise<T> {
+  const idToken = await getAuth().currentUser?.getIdToken();
+  if (!idToken) throw new Error("未ログインです");
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`POST ${path} -> ${res.status}`);
+  return res.json();
+}
+
+async function apiDelete(path: string): Promise<void> {
+  const idToken = await getAuth().currentUser?.getIdToken();
+  if (!idToken) throw new Error("未ログインです");
+  const res = await fetch(path, { method: "DELETE", headers: { Authorization: `Bearer ${idToken}` } });
+  if (!res.ok) throw new Error(`DELETE ${path} -> ${res.status}`);
+}
 
 /* ----------- 型定義 ----------- */
 // テンプレートの種類
@@ -62,92 +91,111 @@ export default function AdminFileManager() {
 const handleUpload = () => {
   if (!tplFile) return;
 
+  const company = localStorage.getItem("company") ?? "default";
   const reader = new FileReader();
-  reader.onload = () => {
-    const result = reader.result as string;
-    if (!result.startsWith("data:application/pdf;base64,")) {
-      alert("無効なPDFファイルです（base64形式でない）");
-      return;
-    }
 
-    const name = tplFile.name.replace(/\.(pdf)$/i, "");
-    const newTpl = {
-      key: `tpl_${tplType}_${Date.now()}`,
-      name,
-      type: tplType,
-      date: todayStr(),
-      dataUrl: result,
-      map: {},
-    };
-    localStorage.setItem(newTpl.key, JSON.stringify(newTpl));
-    setTplFile(null);
-    alert("テンプレートを保存しました。");
-    reload();
+  reader.onload = async () => {
+    try {
+      const result = reader.result as string;
+      if (!result.startsWith("data:application/pdf;base64,")) {
+        alert("無効なPDFファイルです（base64形式でない）");
+        return;
+      }
+      const name = tplFile.name.replace(/\.(pdf)$/i, "");
+
+      try {
+        const saved = await apiPost<Template>("/api/templates/upload", {
+          company,
+          type: tplType,
+          name,
+          dataUrl: result,
+          map: {},
+        });
+        setTemplates((prev) => [saved, ...prev]);
+      } catch {
+        const newTpl = {
+          key: `tpl_${tplType}_${Date.now()}`,
+          name,
+          type: tplType,
+          date: todayStr(),
+          dataUrl: result,
+          map: {},
+        };
+        localStorage.setItem(newTpl.key, JSON.stringify(newTpl));
+        setTemplates((prev) => [newTpl, ...prev]);
+      }
+
+      setTplFile(null);
+      alert("テンプレートを保存しました。");
+      reload();
+    } catch (e) {
+      console.error(e);
+      alert("アップロードに失敗しました");
+    }
   };
+
   reader.readAsDataURL(tplFile);
 };
-
- useEffect(() => {
-  const tmpPdfs: PdfItem[] = [];
-  const tmpZips: ZipItem[] = [];
-
-  for (const [key, value] of Object.entries(localStorage)) {
-    if (key.startsWith("po_") || key.startsWith("ps_") || key.startsWith("inv_")) {
-      const pdf = JSON.parse(value);
-      tmpPdfs.push({ key, ...pdf });
-    }
-
-    if (key.startsWith("monthlyZip_") || key.startsWith("yearZip_")) {
-      const [, ym, driverId] = key.split("_"); // ym = "2025-05" or "2024"
-      tmpZips.push({
-        key,
-        ym,
-        driverName: driverId,
-        dataUrl: value,
-      });
-    }
-  }
-
-  setPdfs(tmpPdfs);
-  setZips(tmpZips);
-}, []);
    
   /* ZIP削除 */
-  const handleZipDelete = (key: string) => {
-    if (window.confirm("本当に削除しますか？")) {
-      localStorage.removeItem(key);
-      setZips(prev => prev.filter(z => z.key !== key));
-    }
-  };
-/* ---------------- 一括リロード ---------------- */
-const reload = () => {
-  /* Templates */
-  const tpl: Template[] = Object.entries(localStorage)
-    .filter(([k]) => k.startsWith("tpl_"))
-    .map(([k, v]) => ({ key: k, ...JSON.parse(v) }));
-  setTemplates(tpl);
-
-  /* PDFs（今月分）*/
-  const ymPrefix = new Date().toISOString().slice(0, 7); // "YYYY-MM"
-  const pdfArr: PdfItem[] = Object.entries(localStorage)
-    .filter(([k]) =>
-      (k.startsWith("po_") || k.startsWith("ps_") || k.startsWith("inv_")) &&
-      k.includes(ymPrefix)
-    )
-    .map(([k, v]) => ({ key: k, ...JSON.parse(v) }));
-  setPdfs(pdfArr);
-
-  /* ZIPs */
-  const zipArr: ZipItem[] = Object.entries(localStorage)
-    .filter(([k]) => k.startsWith("monthlyZip_") || k.startsWith("yearZip_"))
-    .map(([k, v]) => {
-      const [, ym, driverId] = k.split("_");
-      return { key: k, ym, driverName: driverId, dataUrl: v as string };
-    });
-  setZips(zipArr);
+  const handleZipDelete = async (key: string) => {
+  if (!window.confirm("本当に削除しますか？")) return;
+  try {
+    await apiDelete(`/api/zips/${encodeURIComponent(key)}`);
+    setZips(prev => prev.filter(z => z.key !== key));
+  } catch {
+    localStorage.removeItem(key);
+    setZips(prev => prev.filter(z => z.key !== key));
+  }
 };
 
-useEffect(reload, []);
+/* ---------------- 一括リロード ---------------- */
+const reload = async () => {
+  const company = localStorage.getItem("company") ?? "default";
+  const ymPrefix = new Date().toISOString().slice(0, 7);
+
+  // Templates
+  try {
+    const tpl = await apiGet<Template[]>(`/api/templates?company=${encodeURIComponent(company)}`);
+    setTemplates(tpl);
+  } catch {
+    const tpl: Template[] = Object.entries(localStorage)
+      .filter(([k]) => k.startsWith("tpl_"))
+      .map(([k, v]) => ({ key: k, ...JSON.parse(v as string) }));
+    setTemplates(tpl);
+  }
+
+  // PDFs（今月分）
+  try {
+    const pdfArr = await apiGet<PdfItem[]>(
+      `/api/pdfs?company=${encodeURIComponent(company)}&ym=${ymPrefix}`
+    );
+    setPdfs(pdfArr);
+  } catch {
+    const pdfArr: PdfItem[] = Object.entries(localStorage)
+      .filter(([k]) =>
+        (k.startsWith("po_") || k.startsWith("ps_") || k.startsWith("inv_")) && k.includes(ymPrefix)
+      )
+      .map(([k, v]) => ({ key: k, ...JSON.parse(v as string) }));
+    setPdfs(pdfArr);
+  }
+
+  // ZIPs
+  try {
+    const zipArr = await apiGet<ZipItem[]>(`/api/zips?company=${encodeURIComponent(company)}`);
+    setZips(zipArr);
+  } catch {
+    const zipArr: ZipItem[] = Object.entries(localStorage)
+      .filter(([k]) => k.startsWith("monthlyZip_") || k.startsWith("yearZip_"))
+      .map(([k, v]) => {
+        const [, ym, driverId] = k.split("_");
+        return { key: k, ym, driverName: driverId, dataUrl: v as string };
+      });
+    setZips(zipArr);
+  }
+};
+
+useEffect(() => { reload(); }, []);
 // === ドライバー情報をプレースホルダーに差し込む関数 ===
 function getDriverAchievements(uid: string, date: string): Record<string, string> {
   const key = `achievement_${uid}_${date}`;
@@ -160,18 +208,26 @@ function getDriverAchievements(uid: string, date: string): Record<string, string
   }
 }
 // 🔧 プレースホルダーとドライバー・実績情報を合成する関数
-function buildFinalMapping(
+async function buildFinalMapping(
   baseMap: Record<string, string>,
   driver: Driver
-): Record<string, string> {
+): Promise<Record<string, string>> {
   const result: Record<string, string> = {};
 
-  // 🔸発注No（管理会社単位でインクリメント）
+  // 🔸発注No（管理会社単位でインクリメント）— サーバ優先・フォールバックLS
   const company = driver.company ?? "default";
   const noKey = `poCounter_${company}`;
-  const current = parseInt(localStorage.getItem(noKey) || "0");
-  const nextNo = current + 1;
-  localStorage.setItem(noKey, String(nextNo));
+  let nextNo: number;
+  try {
+    const data = await apiGet<{ next: number }>(
+      `/api/counters/next?type=po&company=${encodeURIComponent(company)}`
+    );
+    nextNo = data.next;
+  } catch {
+    const current = parseInt(localStorage.getItem(noKey) || "0");
+    nextNo = current + 1;
+    localStorage.setItem(noKey, String(nextNo));
+  }
   result["{{発注No}}"] = String(nextNo).padStart(4, "0");
 
   // 🔸担当者名（ログインユーザー）
@@ -186,7 +242,8 @@ function buildFinalMapping(
   Object.entries(baseMap).forEach(([placeholder, driverField]) => {
     if (!placeholder.startsWith("{{") || placeholder in result) return;
     if (driverField.startsWith("実績_")) return;
-    result[placeholder] = driver[driverField] ?? "";
+    // @ts-ignore
+    result[placeholder] = (driver as any)[driverField] ?? "";
   });
 
   // 🔸実績データ
@@ -213,26 +270,19 @@ function buildFinalMapping(
 
 function applyDriverMapping(
   templateDataUrl: string,
-  mapping: Record<string, string>,
-  driver: Driver
+  finalValues: Record<string, string>
 ): string {
   const base64Body = templateDataUrl.split(',')[1];
   let content = atob(base64Body);
 
-  // ✅ ドライバー情報の差し込み
-  Object.entries(mapping).forEach(([placeholder, driverField]) => {
-    if (driverField.startsWith("実績_")) return; // 実績項目は後で処理
-    const value = driver[driverField] ?? "";
-    content = content.replaceAll(placeholder, value);
-  });
-
-  // ✅ 実績データの差し込み
-  const achievements = getDriverAchievements(driver.uid, todayStr());
-  Object.entries(mapping).forEach(([placeholder, mappedKey]) => {
-    if (!mappedKey.startsWith("実績_")) return;
-    const key = mappedKey.replace("実績_", "");
-    const value = achievements[key] ?? "";
-    content = content.replaceAll(placeholder, value);
+  // ✅ 最終値で一括置換
+  Object.entries(finalValues).forEach(([placeholder, value]) => {
+    try {
+      content = content.replaceAll(placeholder, String(value ?? ""));
+    } catch {
+      const re = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
+      content = content.replace(re, String(value ?? ""));
+    }
   });
 
   return `data:application/pdf;base64,${btoa(content)}`;
@@ -244,85 +294,90 @@ useEffect(() => {
   const company = localStorage.getItem("company") ?? "default";
   const initializedKey = `defaultTemplatesInitialized_${company}`;
 
-  // ✅ 実際にテンプレートが既に存在するかチェック
-  const existing = Object.entries(localStorage).filter(([k]) =>
-    k.startsWith("tpl_発注書") || k.startsWith("tpl_支払明細書") || k.startsWith("tpl_請求書")
-  );
-  if (existing.length >= 3) {
-    console.log("⏭ 既にテンプレートが3件以上あるため初期登録スキップ");
-    return;
-  }
+  (async () => {
+    try {
+      // 1) サーバにテンプレがあればそれを使って初期化完了扱い
+      const serverTemplates = await apiGet<Template[]>(
+        `/api/templates?company=${encodeURIComponent(company)}`
+      );
+      if (serverTemplates?.length) {
+        setTemplates(serverTemplates);
+        localStorage.setItem(initializedKey, "true");
+        return;
+      }
+    } catch {
+      // API失敗時はLS判定
+      const existing = Object.keys(localStorage).filter(
+        (k) => k.startsWith("tpl_発注書") || k.startsWith("tpl_支払明細書") || k.startsWith("tpl_請求書")
+      );
+      if (existing.length >= 3 || localStorage.getItem(initializedKey)) return;
+    }
 
-  if (localStorage.getItem(initializedKey)) {
-    console.log("⏭ 初期化キーあり。スキップ");
-    return;
-  }
+    // 2) ここに来たら初期テンプレ投入（API保存優先）
+    const defs = [
+      { type: "発注書" as const, name: "発注書テンプレート.pdf", url: PO_PDF },
+      { type: "支払明細書" as const, name: "支払明細書テンプレート.pdf", url: PS_PDF },
+      { type: "請求書" as const, name: "請求書テンプレート.pdf", url: INV_PDF },
+    ];
 
-  const defs = [
-    { type: "発注書" as const, name: "発注書テンプレート.pdf", url: PO_PDF },
-    { type: "支払明細書" as const, name: "支払明細書テンプレート.pdf", url: PS_PDF },
-    { type: "請求書" as const, name: "請求書テンプレート.pdf", url: INV_PDF },
-  ];
-
-  Promise.all(
-    defs.map(({ type, name, url }) =>
-      fetch(url)
-        .then(res => res.blob())
-        .then(blob => new Promise<string>((resolve, reject) => {
+    try {
+      const created: Template[] = [];
+      for (const { type, name, url } of defs) {
+        const blob = await fetch(url).then((r) => r.blob());
+        const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onloadend = () => {
             const result = reader.result as string;
-            if (!result.startsWith("data:application/pdf;base64,")) {
-              reject(new Error("base64 PDF形式ではありません"));
-            } else {
-              resolve(result);
-            }
+            if (!result.startsWith("data:application/pdf;base64,")) reject(new Error("base64ではない"));
+            else resolve(result);
           };
           reader.onerror = reject;
           reader.readAsDataURL(blob);
-        }))
-        .then(dataUrl => {
+        });
+
+        try {
+          const saved = await apiPost<Template>("/api/templates/upload", {
+            company, type, name, dataUrl, map: {},
+          });
+          created.push(saved);
+        } catch {
           const key = `tpl_${type}_${Date.now()}`;
-          const tpl: Template = {
-            key,
-            name,
-            type,
-            date: todayStr(),
-            dataUrl,
-            map: {},
-          };
+          const tpl: Template = { key, name, type, date: todayStr(), dataUrl, map: {} };
           localStorage.setItem(key, JSON.stringify(tpl));
-        })
-    )
-  ).then(() => {
-    localStorage.setItem(initializedKey, "true");
-    console.log("✅ 初期テンプレート登録完了");
-    reload();
-  }).catch(err => {
-    console.error("❌ 初期テンプレート登録エラー:", err);
-  });
+          created.push(tpl);
+        }
+      }
+      setTemplates(created);
+      localStorage.setItem(initializedKey, "true");
+      console.log("✅ 初期テンプレート登録完了");
+    } catch (err) {
+      console.error("❌ 初期テンプレート登録エラー:", err);
+    }
+  })();
 }, []);
 
 useEffect(() => {
-  const company = localStorage.getItem("company");
-  if (!company) {
-    console.warn("⚠️ company が localStorage にありません");
-    return;
-  }
-
-  const raw = localStorage.getItem(`driverList_${company}`);
-  if (!raw) {
-    console.warn(`⚠️ driverList_${company} が見つかりません`);
-    return;
-  }
-
-  try {
-    const list = JSON.parse(raw);
-    console.log("✅ driverList を取得しました:", list);
-    setDriverList(list);
-  } catch (e) {
-    console.error("❌ driverList のパースに失敗:", e);
-  }
+  (async () => {
+    const company = localStorage.getItem("company") ?? "";
+    if (!company) {
+      console.warn("⚠️ company が localStorage にありません");
+      return;
+    }
+    try {
+      const list = await apiGet<Driver[]>(`/api/drivers?company=${encodeURIComponent(company)}`);
+      setDriverList(list);
+    } catch (e) {
+      console.warn("drivers API 取得失敗。localStorageへフォールバック", e);
+      const raw = localStorage.getItem(`driverList_${company}`);
+      if (!raw) return;
+      try {
+        const list = JSON.parse(raw);
+        setDriverList(list);
+      } catch (err) {
+        console.error("❌ driverList のパースに失敗:", err);
+      }
+    }
+  })();
 }, []);
 
 // ------- マッピング編集モーダル用 -------
@@ -331,15 +386,8 @@ const [placeholders,  setPlaceholders]  = useState<string[]>([]);               
 const [mapping,       setMapping]       = useState<Record<string,string>>({});  // 入力値
 
 /** モーダルを開く */
-async function openMappingModal(storageKey: string) {
-  const metaRaw = localStorage.getItem(storageKey);
-  if (!metaRaw) {
-    console.warn(`テンプレート ${storageKey} が見つかりません`);
-    return;
-  }
-
-  const meta = JSON.parse(metaRaw);
-  const dataUrl = meta.dataUrl;
+async function openMappingModal(tpl: Template) {
+  const dataUrl = tpl.dataUrl;
   if (!dataUrl || !dataUrl.startsWith("data:application/pdf;base64,")) {
     alert("このテンプレートは破損しています（base64 PDFではありません）");
     return;
@@ -348,14 +396,12 @@ async function openMappingModal(storageKey: string) {
   try {
     const { extractPlaceholders } = await import("./utils/pdfUtils");
     const ph = await extractPlaceholders(dataUrl);
-
     if (!Array.isArray(ph) || ph.length === 0) {
       throw new Error("プレースホルダーが見つかりません");
     }
-
-    setMapKey(storageKey);
+    setMapKey(tpl.key); // key はサーバ/LS共通の識別子として扱う
     setPlaceholders(ph);
-    setMapping(meta.map ?? {});
+    setMapping(tpl.map ?? {});
   } catch (e) {
     console.error("❌ PDF読み取り失敗:", e);
     alert("PDFの読み取りに失敗しました（ファイルが破損しているか、形式不明）");
@@ -363,11 +409,23 @@ async function openMappingModal(storageKey: string) {
 }
 
 /** 保存ボタン */
-function saveMapping() {
+async function saveMapping() {
   if (!mapKey) return;
-  const meta = JSON.parse(localStorage.getItem(mapKey)!);
-  localStorage.setItem(mapKey, JSON.stringify({ ...meta, map: mapping }));
-  setMapKey(null);                     // モーダルを閉じる
+  try {
+    await apiPost("/api/templates/update-map", { key: mapKey, map: mapping });
+  } catch {
+    // localStorage に無い（APIからだけ取得している）場合に備える
+    const metaRaw = localStorage.getItem(mapKey);
+    if (metaRaw) {
+      const meta = JSON.parse(metaRaw);
+      localStorage.setItem(mapKey, JSON.stringify({ ...meta, map: mapping }));
+    } else {
+      // state 上のテンプレを直接更新
+      setTemplates(prev => prev.map(t => (t.key === mapKey ? { ...t, map: mapping } : t)));
+    }
+  }
+  setMapKey(null);
+  reload();
 }
 
   /* ---------- JSX ---------- */
@@ -441,41 +499,52 @@ function saveMapping() {
   <button
     className="bg-indigo-600 text-white px-4 py-1 rounded"
     onClick={async () => {
-      if (!selectedDriver) {
-        alert("ドライバーを選択してください");
-        return;
-      }
+  if (!selectedDriver) {
+    alert("ドライバーを選択してください");
+    return;
+  }
 
-      const target = templates.find(t => t.type === (
-        currentTab === "PO" ? "発注書" :
-        currentTab === "PS" ? "支払明細書" : "請求書"
-      ));
-      if (!target) {
-        alert("該当テンプレートが見つかりません");
-        return;
-      }
+  const target = templates.find(t => t.type === (
+    currentTab === "PO" ? "発注書" :
+    currentTab === "PS" ? "支払明細書" : "請求書"
+  ));
+  if (!target) {
+    alert("該当テンプレートが見つかりません");
+    return;
+  }
 
-      const map = target.map ?? {};
-      const filledDataUrl = applyDriverMapping(
-        target.dataUrl,
-        buildFinalMapping(map, selectedDriver),
-        selectedDriver
-      );
+  // ❶ マッピング最終値を生成（サーバ連番取得含む）
+  const finalValues = await buildFinalMapping(target.map ?? {}, selectedDriver);
 
-      const fileName = `${todayStr()}_${selectedDriver.name}_${target.type}.pdf`;
-      const keyPrefix = currentTab === "PO" ? "po_" : currentTab === "PS" ? "ps_" : "inv_";
-      const key = `${keyPrefix}${Date.now()}`;
+  // ❷ PDFへ差し込み（クライアントで生成）
+  const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
 
-      localStorage.setItem(key, JSON.stringify({
-        driverName: selectedDriver.name,
-        date: todayStr(),
-        fileName,
-        dataUrl: filledDataUrl,
-      }));
+  // ❸ 保存（API優先、失敗時はLS）
+  const fileName = `${todayStr()}_${selectedDriver.name}_${target.type}.pdf`;
+  const keyPrefix = currentTab === "PO" ? "po_" : currentTab === "PS" ? "ps_" : "inv_";
 
-      alert("PDFを作成しました");
-      reload();
-    }}
+  try {
+    await apiPost("/api/pdfs/save", {
+      company: localStorage.getItem("company") ?? "default",
+      driverName: selectedDriver.name,
+      date: todayStr(),
+      fileName,
+      dataUrl: filledDataUrl,
+      type: target.type,
+    });
+  } catch {
+    const key = `${keyPrefix}${Date.now()}`;
+    localStorage.setItem(key, JSON.stringify({
+      driverName: selectedDriver.name,
+      date: todayStr(),
+      fileName,
+      dataUrl: filledDataUrl,
+    }));
+  }
+
+  alert("PDFを作成しました");
+  reload();
+}}
   >
     作成
   </button>
@@ -513,22 +582,26 @@ function saveMapping() {
   表示
 </a>
   <button
-    className="text-green-600 underline mr-3"
-    onClick={() => openMappingModal(tpl.key)}
-  >
-    マッピング編集
-  </button>
+  className="text-green-600 underline mr-3"
+  onClick={() => openMappingModal(tpl)}
+>
+  マッピング編集
+</button>
   <button
-    className="text-red-600 underline mr-3"
-    onClick={() => {
-      if (window.confirm("本当に削除しますか？")) {
-        localStorage.removeItem(tpl.key);
-        setTemplates(t => t.filter(tp => tp.key !== tpl.key));
-      }
-    }}
-  >
-    削除
-  </button>
+  className="text-red-600 underline mr-3"
+  onClick={async () => {
+    if (!window.confirm("本当に削除しますか？")) return;
+    try {
+      await apiDelete(`/api/templates/${encodeURIComponent(tpl.key)}`);
+    } catch {
+      // APIが未実装/失敗時はフォールバック
+      localStorage.removeItem(tpl.key);
+    }
+    setTemplates(t => t.filter(tp => tp.key !== tpl.key));
+  }}
+>
+  削除
+</button>
 </td>
 
   </tr>

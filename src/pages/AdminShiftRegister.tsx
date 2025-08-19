@@ -4,7 +4,40 @@ import projectList from "../data/ProjectList";
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { createPS } from "../utils/pdfUtils";
-import "jspdf-autotable";
+import autoTable from "jspdf-autotable";
+
+// ▼ ドライバーの最小型
+type DriverRow = { id: string; name: string };
+
+// ▼ 配列から「ドライバー形状だけ」を抽出して正規化
+// 案件名と混在した配列から「ドライバーだけ」を抽出する
+const pickDrivers = (arr: any[], projectNames: Set<string>): DriverRow[] =>
+  (Array.isArray(arr) ? arr : [])
+    .filter((x) => {
+      if (!x) return false;
+
+      const name =
+        x.name ?? x.fullName ?? x.displayName ?? x.driverName ?? '';
+
+      // 案件名と一致 → 除外
+      if (projectNames.has(String(name))) return false;
+
+      // 案件っぽいキーを持つ → 除外
+      if (
+        'unitPrice' in x ||
+        'startTime' in x ||
+        'endTime' in x ||
+        'color' in x ||
+        'textColor' in x
+      ) return false;
+
+      const id = x.id ?? x.uid ?? x.loginId ?? x.driverId ?? '';
+      return Boolean(id && name);
+    })
+    .map((x) => ({
+      id: x.id ?? x.uid ?? x.loginId ?? x.driverId ?? '',
+      name: x.name ?? x.fullName ?? x.displayName ?? x.driverName ?? '',
+    }));
 
 type ShiftItem = {
   project: string;
@@ -14,16 +47,19 @@ type ShiftItem = {
   status?: 'normal' | 'late' | 'early' | 'absent';
 };
 
-const StatusSelect: React.FC<{
-  value?: ShiftItem['status'];
-  onChange: (v: ShiftItem['status']) => void;
-  disabled?: boolean;
-}> = ({ value, onChange, disabled }) => (
+type StatusSelectProps = {
+   value?: ShiftItem['status'];
+   onChange: (v: ShiftItem['status']) => void;
+   disabled?: boolean;
+ };
+ const StatusSelect: React.FC<StatusSelectProps> = (
+   { value, onChange, disabled }: StatusSelectProps
+ ) => (
   <select
     /* ▼ クラス名をまとめて result-select に置き換え  */
     className="result-select ml-1"
     value={value ?? 'normal'}
-    onChange={e => onChange(e.target.value as any)}
+    onChange={e => onChange(e.target.value as ShiftItem['status'])}
     disabled={disabled}
   >
     <option value="normal">ー</option>
@@ -38,8 +74,17 @@ const AdminShiftRegister = () => {
   const [hasLoaded, setHasLoaded] = useState(false); 
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
-  const [shifts, setShifts] = useState({});
+  type DayEntries = ShiftItem[] | ShiftItem | undefined;
+type ShiftsState = Record<string, Record<string, DayEntries>>; // driverId → dateStr → entries
+const [shifts, setShifts] = useState<ShiftsState>({});
   const [projects, setProjects] = useState(projectList);
+
+// 案件名の Set（ドライバー抽出時のフィルタに利用）
+const projectNameSet = React.useMemo(
+  () => new Set(projects.map((p: any) => String(p.name))),
+  [projects]
+);
+
   /** { 案件名 : 単価 } をメモ化 */
 const projectPriceMap = React.useMemo(
   () =>
@@ -49,18 +94,26 @@ const projectPriceMap = React.useMemo(
   [projects]
 );
   const [driverList, setDriverList] = useState<{ id: string; name: string }[]>([]);
-  const [abbreviations, setAbbreviations] = useState({});
+  const [abbreviations, setAbbreviations] = useState<Record<string, string>>({});
   const [showAbbreviationModal, setShowAbbreviationModal] = useState(false);
-  const [requiredPersonnel, setRequiredPersonnel] = useState<{ [date: string]: { [project: string]: number } }>({});
+  const [requiredPersonnel, setRequiredPersonnel] = useState<Record<string, number>>({});
   const [isConfirmed, setIsConfirmed] = useState(false);
   const [showRequiredModal, setShowRequiredModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isResultConfirmed, setIsResultConfirmed] = useState(false);
 
-const ShiftCell: React.FC<{ driverId: string; dateStr: string }> = ({
-  driverId,
-  dateStr,
-}) => {
+  const [company, setCompany] = useState<string>("");
+
+// 会社・年月を含むキーを一括生成
+const makeKey = React.useCallback(
+  (base: string) => `${base}_${company}_${year}_${month}`,
+  [company, year, month]
+);
+
+type ShiftCellProps = { driverId: string; dateStr: string };
+ const ShiftCell: React.FC<ShiftCellProps> = (
+   { driverId, dateStr }: ShiftCellProps
+ ) => {
   /** その日のバッジ一覧を配列化 */
   const items: ShiftItem[] = Array.isArray(shifts[driverId]?.[dateStr])
     ? shifts[driverId][dateStr]
@@ -97,7 +150,7 @@ const ShiftCell: React.FC<{ driverId: string; dateStr: string }> = ({
               <StatusSelect
                 value={it.status}
                 disabled={false}
-                onChange={v => {
+                onChange={(v: ShiftItem['status']) => {
                   setShifts(prev => {
                     const list = [...items];
                     list[idx]  = { ...list[idx], status: v };
@@ -157,7 +210,7 @@ const ShiftCell: React.FC<{ driverId: string; dateStr: string }> = ({
           }}
         >
           <option value="">案件選択</option>
-          {projects.map((p) => (
+          {projects.map((p: any) => (
             <option key={p.id} value={p.name}>
               {abbreviations[p.name] || p.name}
             </option>
@@ -183,39 +236,71 @@ useEffect(() => {
   }
 }, []);
 useEffect(() => {
-  const saved = localStorage.getItem(`confirmedShift_${year}_${month}`);
-  if (saved === 'true') {
-    setIsConfirmed(true);
-  }
-}, [year, month]);
+  if (!company) return;
+  const saved = localStorage.getItem(makeKey("confirmedShift"));
+  setIsConfirmed(saved === 'true');
+}, [company, year, month, makeKey]);
 
 useEffect(() => {
-  const saved = localStorage.getItem(`confirmedResult_${year}_${month}`);
-  if (saved === 'true') setIsResultConfirmed(true);
-}, [year, month]);
+  if (!company) return;
+  const saved = localStorage.getItem(makeKey("confirmedResult"));
+  setIsResultConfirmed(saved === 'true');
+}, [company, year, month, makeKey]);
+
 
 useEffect(() => {
-  const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
-  const company = admin.company || "";
-
-  const savedDrivers = localStorage.getItem(`driverList_${company}`);
-  if (savedDrivers) {
-    try {
-      const parsed = JSON.parse(savedDrivers);
-      // nameとidだけ使う構造なら map() して整える
-      const simplified = parsed.map((d: any) => ({ id: d.id, name: d.name }));
-      setDriverList(simplified);
-    } catch (e) {
-      console.error("ドライバーリスト読み込み失敗", e);
-    }
-  }
+  // ログイン情報から company を取得（あなたのログイン仕様に合わせて両対応）
+  const cur = JSON.parse(localStorage.getItem("currentUser") || "{}");
+  const c1 = localStorage.getItem("company") || "";
+  const c2 = cur?.company || "";
+  const comp = c1 || c2 || "";
+  setCompany(comp);
 }, []);
+
+useEffect(() => {
+  if (!company) { setDriverList([]); return; }
+
+  const ac = new AbortController();
+
+  const load = async () => {
+    try {
+      const res = await fetch(
+        `/api/drivers?company=${encodeURIComponent(company)}`,
+        { credentials: 'include', headers: { Accept: 'application/json' }, signal: ac.signal }
+      );
+
+      if (!res.ok) {
+        console.warn('drivers fetch not ok:', res.status);
+        setDriverList([]);   // ← エラー時も空に固定
+        return;
+      }
+
+      const data = await res.json();
+      const list = pickDrivers(data, projectNameSet); // ← 案件名は弾く
+      setDriverList(list);
+    } catch (e: any) {
+      if (e.name !== 'AbortError') console.error(e);
+      setDriverList([]);     // ← 通信不可でも空に固定（フォールバックしない）
+    }
+  };
+
+  load();
+
+  // ドライバー登録完了イベントで再読込
+  const onChanged = () => load();
+  window.addEventListener('drivers:changed', onChanged);
+
+  return () => {
+    ac.abort();
+    window.removeEventListener('drivers:changed', onChanged);
+  };
+}, [company, projectNameSet]);
 
 useEffect(() => {
   const savedProjects = localStorage.getItem("projectList");
   if (savedProjects) {
     const parsed = JSON.parse(savedProjects);
-    const fixed = parsed.map(p => ({
+    const fixed = (parsed as any[]).map((p: any) => ({
       ...p,
       color: p.color || "#cccccc" // colorが無い場合にデフォルト補完
     }));
@@ -228,7 +313,8 @@ useEffect(() => {
   setLoading(false);
 }, []);
 useEffect(() => {
-  const key = `shifts_${year}_${month}`;
+  if (!company) return;
+  const key = makeKey("shifts");
   const savedShifts = localStorage.getItem(key);
   if (savedShifts) {
     try {
@@ -237,43 +323,52 @@ useEffect(() => {
       console.error("シフト読み込みエラー", e);
     }
   }
-  setHasLoaded(true); // ✅ ←これを追加（復元が完了した印）
-}, [year, month]);
+  setHasLoaded(true);
+}, [company, year, month, makeKey]);
+
 useEffect(() => {
-  if (!hasLoaded) return;
-  const key = `shifts_${year}_${month}`;
+  if (!hasLoaded || !company) return;
+  const key = makeKey("shifts");
   try {
     localStorage.setItem(key, JSON.stringify(shifts));
   } catch (e) {
     console.error("自動保存失敗", e);
   }
-}, [shifts, year, month, hasLoaded]);
+}, [shifts, company, year, month, hasLoaded, makeKey]);
+
 useEffect(() => {
-  const saved = localStorage.getItem("requiredPersonnel");
-  if (saved) {
-    setRequiredPersonnel(JSON.parse(saved));
-  }
-}, []);
+  if (!company) return;
+  const key = makeKey("requiredPersonnel");
+  const saved = localStorage.getItem(key);
+  if (saved) setRequiredPersonnel(JSON.parse(saved));
+}, [company, year, month, makeKey]);
+
 const handleSaveAbbreviations = () => {
   localStorage.setItem('projectAbbreviations', JSON.stringify(abbreviations));
   setShowAbbreviationModal(false);
 };
 const handleConfirmShift = () => {
   // ① 確定フラグを保存
-  localStorage.setItem(`confirmedShift_${year}_${month}`, "true");
+  localStorage.setItem(makeKey("confirmedShift"), "true");
   setIsConfirmed(true);
 
-  // ② ドライバーごとの発注書 PDF を生成して localStorage に保存
-  const drivers = JSON.parse(localStorage.getItem("driverList") || "[]");
+  // ② ドライバーごとの発注書 PDF を生成してダウンロード
+  const drivers = driverList; // すでに API から取得済みの state を利用
   const pdfMonth = `${year}-${String(month).padStart(2, "0")}`;
 
   drivers.forEach((drv: any) => {
-    // ドライバーの当月シフトだけ抽出
-    const drvShifts: ShiftItem[] = Object.values(shifts?.[drv.id] || {})
-      .flat()                              // 日付ごとの配列をまとめる
-      .filter((s: any) => !!s);            // null チェック
+   // ドライバーの当月シフトだけ抽出（flat代替）
+   const drvShifts: ShiftItem[] = Object
+     .values(shifts?.[drv.id] || {})
+     .reduce<ShiftItem[]>((acc, v) => {
+       if (!v) return acc;
+       return acc.concat(Array.isArray(v) ? v : [v]);
+     }, []);
+   if (drvShifts.length === 0) return;    // シフトが無ければスキップ
 
-    if (drvShifts.length === 0) return;    // シフトが無ければスキップ
+   // 合計金額（※後で使うので必須）
+   const total = drvShifts.reduce((sum, s) => sum + (s?.unitPrice ?? 0), 0);
+
 
     const doc = new jsPDF();
 
@@ -288,30 +383,18 @@ const handleConfirmShift = () => {
     doc.text(`電話　：${drv.phone   ?? "未登録"}`, 20, 58);
 
     /* ------ 明細テーブル ------ */
-    doc.autoTable({
-      head: [["案件名", "単価(円/日)"]],
-      body: drvShifts.map(s => [s.project, s.unitPrice.toLocaleString()]),
-      startY: 70,
-      styles: { fontSize: 10 }
-    });
+    autoTable(doc, {
+   head: [["案件名", "単価(円/日)"]],
+   body: drvShifts.map(s => [s.project, s.unitPrice.toLocaleString()]),
+   startY: 70,
+   styles: { fontSize: 10 },
+ });
+ const finalY = (doc as any).lastAutoTable?.finalY ?? 70;
+ doc.text(`合計金額：${total.toLocaleString()} 円（税込）`, 20, finalY + 10);
 
-    /* ------ 合計 ------ */
-    const total = drvShifts.reduce((sum, s) => sum + s.unitPrice, 0);
-    doc.text(`合計金額：${total.toLocaleString()} 円（税込）`,
-             20, doc.lastAutoTable.finalY + 10);
-
-    /* ------ 保存 ------ */
-    const dataUrl = doc.output("dataurlstring");
-    localStorage.setItem(
-      `po_${year}_${String(month).padStart(2, "0")}_${drv.id}`,
-      JSON.stringify({
-        driverId:   drv.id,
-        driverName: drv.name,
-        fileName:   `PO_${year}${String(month).padStart(2,"0")}_${drv.id}.pdf`,
-        date:       `${pdfMonth}-01`,
-        dataUrl
-      })
-    );
+    /* ------ ダウンロード ------ */
+const fileName = `PO_${year}${String(month).padStart(2,"0")}_${drv.id}.pdf`;
+doc.save(fileName);
   });
 };
 
@@ -320,12 +403,12 @@ const handleUnconfirmShift = () => {
   if (confirm) {
     setIsConfirmed(false);
     setIsResultConfirmed(false);
-    localStorage.removeItem(`confirmedShift_${year}_${month}`);
-    localStorage.removeItem(`confirmedResult_${year}_${month}`);
+    localStorage.removeItem(makeKey("confirmedShift"));
+localStorage.removeItem(makeKey("confirmedResult"));
   }
 };
 const handleExportPDF = async () => {
-  const table = document.querySelector('table');
+  const table = document.querySelector('table') as HTMLTableElement | null;
   if (!table) return;
 
   /* ===== 1. キャプチャ用クラス付与（PDF サイズ用の CSS を当てる） ===== */
@@ -384,7 +467,10 @@ const handleExportPDF = async () => {
   pdf.save(`${year}年${month}月_シフト表.pdf`);
 };
 
-  const getDaysOfMonth = (year: number, month: number) => {
+  const getDaysOfMonth = (
+   year: number,
+   month: number
+): { date: Date; day: number; dateStr: string }[] => {
   const result = [];
   const date = new Date(year, month - 1, 1);
   while (date.getMonth() === month - 1) {
@@ -402,11 +488,11 @@ const handleExportPDF = async () => {
   return result;
 };
 const days = getDaysOfMonth(year, month);
- const handleChange = (
-  driverId: string,
-  dateStr: string,
-  projectName: string | null   // null → 最後のバッジを削除
-) => {
+function handleChange(
+   driverId: string,
+   dateStr: string,
+   projectName: string | null   // null → 最後のバッジを削除
+ ) {
   setShifts(prev => {
     /* 既存を配列化 */
     const oldList: ShiftItem[] = Array.isArray(prev?.[driverId]?.[dateStr])
@@ -430,32 +516,32 @@ const days = getDaysOfMonth(year, month);
       ...prev,
       [driverId]: { ...prev[driverId], [dateStr]: newList },
     };
-    localStorage.setItem(`shifts_${year}_${month}`, JSON.stringify(updated));
+    localStorage.setItem(makeKey("shifts"), JSON.stringify(updated));
     return updated;
   });
-};
+}
 
 const getAssignedCount = (dateStr: string, projectName: string) =>
-driverList.reduce((count, drv) => {
- const list = Array.isArray(shifts[drv.id]?.[dateStr])
-   ? shifts[drv.id][dateStr]
-   : shifts[drv.id]?.[dateStr]
-   ? [shifts[drv.id][dateStr]]
-   : [];
- return count + list.filter(it => it.project === projectName).length;
-}, 0);
+  driverList.reduce((count, drv) => {
+    const list: ShiftItem[] = Array.isArray(shifts[drv.id]?.[dateStr])
+      ? (shifts[drv.id][dateStr] as ShiftItem[])
+      : shifts[drv.id]?.[dateStr]
+      ? [shifts[drv.id][dateStr] as ShiftItem]
+      : [];
+    return count + list.filter((it: ShiftItem) => it.project === projectName).length;
+  }, 0);
 
 const calculateTotalMinutes = (driverId: string) =>
   days.reduce((total, d) => {
-    const list = Array.isArray(shifts[driverId]?.[d.dateStr])
-      ? shifts[driverId][d.dateStr]
+    const list: ShiftItem[] = Array.isArray(shifts[driverId]?.[d.dateStr])
+      ? (shifts[driverId][d.dateStr] as ShiftItem[])
       : shifts[driverId]?.[d.dateStr]
-      ? [shifts[driverId][d.dateStr]]
+      ? [shifts[driverId][d.dateStr] as ShiftItem]
       : [];
 
-    const dayMinutes = list.reduce((sub, it) => {
+    const dayMinutes = list.reduce<number>((sub, it: ShiftItem) => {
       if (it.status === 'absent') return sub;
-      const p = projects.find((pr) => pr.name === it.project);
+      const p = projects.find((pr: any) => pr.name === it.project);
       if (!p || !p.startTime || !p.endTime) return sub;
 
       const [sh, sm] = p.startTime.split(":").map(Number);
@@ -468,7 +554,7 @@ const calculateTotalMinutes = (driverId: string) =>
   
   const years = [2024, 2025, 2026];
   const months = Array.from({ length: 12 }, (_, i) => i + 1);
-  if (loading || driverList.length === 0 || projects.length === 0) {
+  if (loading) {
   return <div>読み込み中...</div>;
 }
 
@@ -485,7 +571,7 @@ const calculateTotalMinutes = (driverId: string) =>
         <select value={month} onChange={e => setMonth(+e.target.value)} className="border px-2 py-1 rounded">
           {months.map(m => <option key={m} value={m}>{m}月</option>)}
         </select>
-        <button onClick={() => setShowAbbreviationModal(true)} className="ml-2 px-3 py-1 bg-gray-600 text-white round hover:bg-blue-200 transition">案件カスタム設定</button>
+        <button onClick={() => setShowAbbreviationModal(true)} className="ml-2 px-3 py-1 bg-gray-600 text-white rounded hover:bg-blue-200 transition">案件カスタム設定</button>
      <button
   className="ml-4 px-3 py-1 bg-blue-600 text-white rounded hover:bg-green-700"
   onClick={() => setShowRequiredModal(true)}
@@ -496,8 +582,8 @@ const calculateTotalMinutes = (driverId: string) =>
 <button
   className="ml-2 px-3 py-1 bg-yellow-500 text-white rounded hover:bg-yellow-600"
   onClick={() => {
-    const key = `shifts_${year}_${month}`;
-    localStorage.setItem(key, JSON.stringify(shifts));
+    const key = makeKey("shifts");
+localStorage.setItem(key, JSON.stringify(shifts));
     alert("一時保存しました");
   }}
 >
@@ -524,19 +610,15 @@ const calculateTotalMinutes = (driverId: string) =>
         onClick={() => {
           if (window.confirm('実績を確定しますか？ 確定後は編集できません。')) {
             setIsResultConfirmed(true);
-            localStorage.setItem(`confirmedResult_${year}_${month}`, 'true');
+            localStorage.setItem(makeKey("confirmedResult"), 'true');
             driverList.forEach(async (drv) => {
   const hours = calculateTotalMinutes(drv.id) / 60;
   const dataUrl = await createPS(drv.name, year, month, hours);
-  localStorage.setItem(
-    `ps_${year}_${String(month).padStart(2,"0")}_${drv.id}`,
-    JSON.stringify({
-      driverName: drv.name,
-      fileName:   `PS_${year}${String(month).padStart(2,"0")}_${drv.id}.pdf`,
-      date:       `${year}-${String(month).padStart(2,"0")}-01`,
-      dataUrl,
-    })
-  );
+// data:application/pdf;base64,... をそのままダウンロード
+const a = document.createElement('a');
+a.href = dataUrl;
+a.download = `PS_${year}${String(month).padStart(2,"0")}_${drv.id}.pdf`;
+a.click();
 });
           }
         }}
@@ -714,7 +796,7 @@ const calculateTotalMinutes = (driverId: string) =>
     <button
       className="mt-4 px-4 py-1 bg-yellow-500 text-white rounded"
       onClick={() => {
-        localStorage.setItem("requiredPersonnel", JSON.stringify(requiredPersonnel));
+        localStorage.setItem(makeKey("requiredPersonnel"), JSON.stringify(requiredPersonnel));
         setShowRequiredModal(false);
       }}
     >
@@ -764,22 +846,31 @@ const calculateTotalMinutes = (driverId: string) =>
    <th className="sticky top-[42px] z-10 bg-yellow-50 border px-1 py-1">-</th>
   </tr>
 ))}
-          {driverList.map((driver, i) => (
-            <tr key={driver.id} className={i % 2 === 0 ? 'bg-white' : 'bg-purple-100'}>
-              <td className="border px-1 py-1 text-center whitespace-nowrap">{driver.name}</td>
-              {days.map(d => (
-                <td key={d.dateStr} className="border px-1 py-1">
-                  <div className="flex items-center gap-1">
-  <ShiftCell driverId={driver.id} dateStr={d.dateStr} />
-</div>
+          {driverList.length === 0 ? (
+  <tr>
+    {/* 氏名 + 日付列(days) + 合計時間 の列数に合わせて colSpan を設定 */}
+    <td className="border px-2 py-4 text-center text-gray-600" colSpan={days.length + 2}>
+      現在この会社のドライバーは登録されていません。ドライバー管理から追加してください。
     </td>
-              ))}
-              <td className="border px-1 py-1 text-right">
-                {(calculateTotalMinutes(driver.id) / 60).toFixed(1)}h
-              </td>
-            </tr>
-          ))}
-        </tbody>
+  </tr>
+) : (
+  driverList.map((driver, i) => (
+    <tr key={driver.id} className={i % 2 === 0 ? 'bg-white' : 'bg-purple-100'}>
+      <td className="border px-1 py-1 text-center whitespace-nowrap">{driver.name}</td>
+      {days.map(d => (
+        <td key={d.dateStr} className="border px-1 py-1">
+          <div className="flex items-center gap-1">
+            <ShiftCell driverId={driver.id} dateStr={d.dateStr} />
+          </div>
+        </td>
+      ))}
+      <td className="border px-1 py-1 text-right">
+        {(calculateTotalMinutes(driver.id) / 60).toFixed(1)}h
+      </td>
+    </tr>
+  ))
+)}
+ </tbody>
       </table>
     </div> 
   ); 
