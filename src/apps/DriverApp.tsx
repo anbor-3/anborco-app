@@ -43,9 +43,11 @@ const App = () => {
         </div>
       </header>
 
-      <div className="flex flex-1">
+      <div className="flex flex-1 min-h-0">
         {/* ✅ サイドバー */}
-        <aside className="w-64 bg-orange-100 p-4 shadow-md flex flex-col justify-between fixed top-16 left-0 h-[calc(100vh-64px)] z-10">
+        <aside
+  className="w-64 bg-orange-100 p-4 shadow-md flex flex-col justify-between fixed top-16 left-0 h-[calc(100vh-64px)] overflow-y-auto overscroll-contain z-10"
+>
           <div>
             <div className="text-sm font-bold mb-2 text-left text-black">メニュー</div>
             <hr className="border-orange-400 mb-4" />
@@ -83,7 +85,7 @@ const App = () => {
         </aside>
 
         {/* ✅ メイン */}
-        <main className="flex-1 bg-orange-50 p-6 ml-64 mt-16 overflow-y-auto overflow-x-auto" style={{ minWidth: "1040px" }}>
+        <main className="flex-1 bg-orange-50 p-6 ml-64 mt-16 min-h-0 overflow-y-auto overflow-x-auto" style={{ minWidth: "1040px" }}>
           <Routes>
             <Route path="/" element={<DriverDashboard />} />
             <Route path="daily-report" element={<DriverDashboard />} />

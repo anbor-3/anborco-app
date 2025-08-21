@@ -4,6 +4,28 @@ import MasterPasswordChange from "../pages/MasterPasswordChange";
 import  { useRef } from "react";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
+// 追加の import（パスは配置に合わせて調整）
+import { CheckCircle, Minus } from "lucide-react";
+import { PLAN_FEATURES } from "../features"; // ← AdminPlanChange と同じ features.ts を使い回し
+
+// 機能ラベル（AdminPlanChange と同じ順）
+const FEATURE_LABELS: { key: keyof typeof PLAN_FEATURES["basic"]; label: string }[] = [
+  { key: "adminManager", label: "管理者管理" },
+  { key: "drivers",      label: "ドライバー管理" },
+  { key: "vehicles",     label: "車両管理" },
+  { key: "chat",         label: "チャット" },
+  { key: "shift",        label: "シフト登録" },
+  { key: "dailyReport",  label: "日報管理" },
+  { key: "projects",     label: "案件一覧" },
+  { key: "files",        label: "ファイル管理" },
+  { key: "map",          label: "位置情報マップ" },
+  { key: "payment",      label: "支払集計" },
+  { key: "todo",         label: "法改正対応ToDo" },
+];
+
+// 左列・右列のキー配列（左右でほぼ同数になるよう固定）
+const FEATURE_ORDER_LEFT  = ["adminManager","drivers","vehicles","dailyReport","shift"] as const;
+const FEATURE_ORDER_RIGHT = ["chat","files","map","projects","payment","todo"] as const;
 
 export default function App() {
  const pricingPlans = [
@@ -49,30 +71,30 @@ const setupPlans = [
   {
     id: "basic-setup",
     name: "ベーシック",
-    price: 50000,
+    price: 80000,
     range: "～30名",
-    details: "初期設定＋簡易レクチャー"
+    details: "初期設定／管理者1名・1データセット取込（最大150件）＋1時間リモート講習"
   },
   {
     id: "standard-setup",
     name: "スタンダード",
-    price: 100000,
+    price: 150000,
     range: "31～70名",
-    details: "管理者研修＋ドライバーCSV取込"
+    details: "ドライバー＋車両CSV取込（合計500件まで）＋2時間講習＋2週間ハイパーケア＋ロゴ/配色"
   },
   {
     id: "premium-setup",
     name: "プレミアム",
-    price: 150000,
+    price: 220000,
     range: "71～99名",
-    details: "車両・案件CSV取込＋セキュリティ設定＋1か月サポート"
+    details: "案件CSV取込＋位置情報/ファイル権限設定＋通知調整＋1か月ハイパーケア"
   },
   {
     id: "unlimited-setup",
     name: "アンリミテッド",
-    price: 150000,
+    price: 300000,
     range: "100名以上",
-    details: "大規模専用研修（+1名¥1,000）"
+    details: "大規模移行＋監査/セキュリティ強化＋従量(@¥800〜¥1,000/人)"
   }
 ];
 
@@ -103,9 +125,9 @@ const setupPlans = [
         </div>
       </header>
 
-      <div className="flex flex-1">
+      <div className="flex flex-1 min-h-0">
         {/* サイドバー */}
-        <aside className="bg-green-800 text-white w-64 pt-4">
+        <aside className="bg-green-800 text-white w-64 pt-4 h-full overflow-y-auto overscroll-contain">
           <div className="px-4 pb-2 text-left font-bold text-white text-sm border-b border-white">
             メニュー
           </div>
@@ -164,7 +186,7 @@ const setupPlans = [
         </aside>
 
         {/* 🔄 ここだけルートに応じて切り替え */}
-        <main className="flex-1 bg-gray-100 p-6 overflow-y-auto overflow-x-auto">
+        <main className="flex-1 bg-gray-100 p-6 min-h-0 overflow-y-auto overflow-x-auto">
           <Routes>
             <Route path="/" element={<Navigate to="/master/customers" replace />} />
             <Route path="/customers" element={<CustomerTable />} />
@@ -188,63 +210,156 @@ const setupPlans = [
   </p>
 </div>
 
-        {/* ✅ 月額料金プラン */}
-        <section>
-          <h2 className="text-center text-2xl font-bold text-yellow-400 mb-4">
-            月額料金プラン
-          </h2>
-          <p className="text-center text-gray-400 mb-8">
-            税込価格・プレミアムサービス
-          </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            {pricingPlans.map((plan) => (
-              <div
-  key={plan.id}
-  className="relative bg-gradient-to-br from-gray-900 to-gray-800 border-2 border-yellow-500 rounded-xl shadow-lg hover:shadow-[0_0_25px_rgba(250,204,21,0.8)] hover:scale-105 transition-transform p-6 text-center"
->
-  {/* ✅ POPULARタグ */}
-  {plan.popular && (
-    <span className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-black text-xs font-bold px-3 py-1 rounded-full shadow-md">
-      POPULAR
-    </span>
-  )}
-  <h3 className="text-xl font-bold text-white">{plan.name}</h3>
-  <p className="text-xs text-gray-400">{plan.eng}</p>
-  <p className="text-sm text-gray-400 mt-2">{plan.description}</p>
-  <p className="text-3xl font-extrabold text-yellow-400 mt-3">
-    ¥{plan.price.toLocaleString()}
+        {/* ✅ 月額料金プラン（上段：ベーシック〜プロ／下段：エリート〜アンリミテッド） */}
+<section>
+  <h2 className="text-center text-2xl font-bold text-yellow-400 mb-4">
+    月額料金プラン
+  </h2>
+  <p className="text-center text-gray-400 mb-8">
+    税込価格・プレミアムサービス
   </p>
-  {plan.extra && (<p className="text-xs text-amber-300">{plan.extra}</p>)}
-  <p className="text-xs text-gray-400 mt-2">対象人数: {plan.range}</p>
-</div>
-            ))}
-          </div>
-        </section>
 
-        {/* ✅ 導入プラン */}
-        <section>
-          <h2 className="text-center text-2xl font-bold text-yellow-400 mb-6">
-            導入プラン
-          </h2>
-          <p className="text-center text-gray-400 mb-6">初期費用・税込価格</p>
-
-          <div className="grid grid-cols-4 gap-6">
-            {setupPlans.map((plan) => (
-              <div
-  key={plan.id}
-  className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-lg shadow-lg p-6 text-center hover:shadow-[0_0_15px_rgba(250,204,21,0.6)] hover:scale-105 transition-transform"
->
-  <p className="text-amber-400 font-bold">{plan.name}</p>
-  <p className="text-2xl font-extrabold text-yellow-400">
-    ¥{plan.price.toLocaleString()}
-  </p>
-  <p className="text-xs text-gray-400">{plan.range}</p>
-  <p className="text-xs text-gray-500">{plan.details}</p>
-</div>
-            ))}
+  {/* 上段：basic / advanced / pro */}
+  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+    {["basic","advanced","pro"].map((id) => {
+      const plan = pricingPlans.find(p => p.id === id)!;
+      const f = PLAN_FEATURES[id as keyof typeof PLAN_FEATURES];
+      return (
+        <div
+          key={plan.id}
+          className="relative bg-gradient-to-br from-gray-900 to-gray-800 border-2 border-yellow-500 rounded-2xl shadow-lg hover:shadow-[0_0_25px_rgba(250,204,21,0.6)] transition-transform p-6"
+        >
+          {/* ヘッダー（名前・英字・価格） */}
+          <div className="text-center">
+            <h3 className="text-xl font-bold text-white">{plan.name}</h3>
+            <p className="text-xs text-gray-400">{plan.eng}</p>
+            <p className="text-3xl font-extrabold text-yellow-400 mt-3">
+              ¥{plan.price.toLocaleString()}
+            </p>
+            {plan.extra && <p className="text-xs text-amber-300">{plan.extra}</p>}
+            <p className="text-xs text-gray-400 mt-2">対象人数: {plan.range}</p>
           </div>
-        </section>
+
+          {/* 区切り */}
+          <div className="my-4 h-px bg-gradient-to-r from-transparent via-yellow-500/30 to-transparent" />
+
+          {/* 機能（左右） */}
+          <div className="grid grid-cols-2 gap-4 text-left">
+            <ul className="space-y-2">
+              {FEATURE_ORDER_LEFT.map((k) => (
+                <li key={k} className="flex items-start gap-2">
+                  {f[k] ? (
+                    <CheckCircle className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" />
+                  ) : (
+                    <Minus className="w-4 h-4 mt-0.5 text-gray-500 shrink-0" />
+                  )}
+                  <span className={f[k] ? "text-gray-100 text-sm" : "text-gray-500 text-sm"}>
+                    {FEATURE_LABELS.find(x => x.key === k)?.label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <ul className="space-y-2">
+              {FEATURE_ORDER_RIGHT.map((k) => (
+                <li key={k} className="flex items-start gap-2">
+                  {f[k] ? (
+                    <CheckCircle className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" />
+                  ) : (
+                    <Minus className="w-4 h-4 mt-0.5 text-gray-500 shrink-0" />
+                  )}
+                  <span className={f[k] ? "text-gray-100 text-sm" : "text-gray-500 text-sm"}>
+                    {FEATURE_LABELS.find(x => x.key === k)?.label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      );
+    })}
+  </div>
+
+  {/* 下段：elite / premium / unlimited */}
+  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+    {["elite","premium","unlimited"].map((id) => {
+      const plan = pricingPlans.find(p => p.id === id)!;
+      const f = PLAN_FEATURES[id as keyof typeof PLAN_FEATURES];
+      return (
+        <div
+          key={plan.id}
+          className="relative bg-gradient-to-br from-gray-900 to-gray-800 border-2 border-yellow-500 rounded-2xl shadow-lg hover:shadow-[0_0_25px_rgba(250,204,21,0.6)] transition-transform p-6"
+        >
+          <div className="text-center">
+            <h3 className="text-xl font-bold text-white">{plan.name}</h3>
+            <p className="text-xs text-gray-400">{plan.eng}</p>
+            <p className="text-3xl font-extrabold text-yellow-400 mt-3">
+              ¥{plan.price.toLocaleString()}
+            </p>
+            {plan.extra && <p className="text-xs text-amber-300">{plan.extra}</p>}
+            <p className="text-xs text-gray-400 mt-2">対象人数: {plan.range}</p>
+          </div>
+
+          <div className="my-4 h-px bg-gradient-to-r from-transparent via-yellow-500/30 to-transparent" />
+
+          <div className="grid grid-cols-2 gap-4 text-left">
+            <ul className="space-y-2">
+              {FEATURE_ORDER_LEFT.map((k) => (
+                <li key={k} className="flex items-start gap-2">
+                  {f[k] ? (
+                    <CheckCircle className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" />
+                  ) : (
+                    <Minus className="w-4 h-4 mt-0.5 text-gray-500 shrink-0" />
+                  )}
+                  <span className={f[k] ? "text-gray-100 text-sm" : "text-gray-500 text-sm"}>
+                    {FEATURE_LABELS.find(x => x.key === k)?.label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <ul className="space-y-2">
+              {FEATURE_ORDER_RIGHT.map((k) => (
+                <li key={k} className="flex items-start gap-2">
+                  {f[k] ? (
+                    <CheckCircle className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" />
+                  ) : (
+                    <Minus className="w-4 h-4 mt-0.5 text-gray-500 shrink-0" />
+                  )}
+                  <span className={f[k] ? "text-gray-100 text-sm" : "text-gray-500 text-sm"}>
+                    {FEATURE_LABELS.find(x => x.key === k)?.label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      );
+    })}
+  </div>
+</section>
+
+{/* ✅ 導入プラン（初期費用） */}
+<section>
+  <h2 className="text-center text-2xl font-bold text-yellow-400 mb-6">
+    導入プラン
+  </h2>
+  <p className="text-center text-gray-400 mb-6">初期費用・税込価格</p>
+
+  <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+    {setupPlans.map((plan) => (
+      <div
+        key={plan.id}
+        className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-lg shadow-lg p-6 text-center hover:shadow-[0_0_15px_rgba(250,204,21,0.6)] hover:scale-105 transition-transform"
+      >
+        <p className="text-amber-400 font-bold">{plan.name}</p>
+        <p className="text-2xl font-extrabold text-yellow-400">
+          ¥{plan.price.toLocaleString()}
+        </p>
+        <p className="text-xs text-gray-400">{plan.range}</p>
+        <p className="text-xs text-gray-500">{plan.details}</p>
+      </div>
+    ))}
+  </div>
+</section>
 
          {/* ✅ お問い合わせ */}
         <section className="text-center mt-10">

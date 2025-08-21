@@ -3,3 +3,7 @@ dist/
 .env
 
 .vercel
+# Firebase Admin の秘密鍵を除外
+serviceAccount.json
+serviceAccount.json
+anborco-app-firebase-adminsdk-*.json

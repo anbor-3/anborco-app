@@ -1,5 +1,6 @@
 // ✅ DriverWorkHistory.tsx - Firebaseを除去し、Neon APIに置き換える準備
 import { useEffect, useState } from "react";
+import { getAuth } from "firebase/auth";
 
 type HistoryEntry = {
   date: string;
@@ -22,7 +23,7 @@ const DriverWorkHistory = () => {
 
     const fetchReturnedReports = async () => {
       try {
-        const res = await fetch(`/api/dailyReports?userId=${loginId}&company=${company}`);
+        const res = await fetch(`/api/daily-reports?userId=${loginId}&company=${company}`);
         const data = await res.json();
         setHistory(data);
       } catch (err) {
@@ -56,17 +57,27 @@ const DriverWorkHistory = () => {
     setReSubmitData({ fileName: "", fileData: "" });
 
     try {
-      await fetch("/api/resubmitReport", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: localStorage.getItem("loginId"),
-          company: localStorage.getItem("company"),
-          date: updated[selectedIndex].date,
-          fileName: reSubmitData.fileName,
-          fileData: reSubmitData.fileData,
-        }),
-      });
+      const auth = getAuth();
+const idToken = await auth.currentUser?.getIdToken();
+if (!idToken) {
+  alert("未ログインです");
+  return;
+}
+
+await fetch("/api/daily-reports/resubmit", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${idToken}`,
+  },
+  body: JSON.stringify({
+    driverId: localStorage.getItem("loginId"),
+    company: localStorage.getItem("company"),
+    date: updated[selectedIndex].date,
+    fileName: reSubmitData.fileName,
+    fileData: reSubmitData.fileData,
+  }),
+});
       alert("✅ 再提出が完了しました");
     } catch (err) {
       console.error("再提出エラー:", err);

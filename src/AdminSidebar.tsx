@@ -1,5 +1,3 @@
-
-import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import {
@@ -15,7 +13,8 @@ import {
   MessageCircle,
   Clock,
   ClipboardCheck,
-  ShieldCheck
+  ShieldCheck,
+  Package
 } from 'lucide-react';
 
 export default function Sidebar({ hasUnreadChat = false }) {
@@ -37,6 +36,7 @@ export default function Sidebar({ hasUnreadChat = false }) {
   { path: '/admin/driver-payment',label: '支払集計', icon: FileText},
   { path: '/admin/todo', label: '法改正対応ToDo', icon: ClipboardCheck },
   { path: '/admin/security', label: 'セキュリティ・契約', icon: ShieldCheck },
+  { path: '/admin/plan', label: 'プラン変更', icon: Package },
   { path: '/admin/password-change', label: 'パスワード変更', icon: Lock },
 ];
 

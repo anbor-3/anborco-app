@@ -1,10 +1,16 @@
 "use client";
 import  { useEffect, useState } from "react";
 
-const API_BASE =
-  (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_BASE_PATH)
-    ? `${(process as any).env.NEXT_PUBLIC_BASE_PATH}/api`
-    : "/api";
+// ✅ APIの基点（basePathとは切り離す）
+// - NEXT_PUBLIC_API_BASE_URL があればそれを使う（例: https://api.anbor.co.jp）
+// - 無ければ同一オリジンの /api を使う
+const API_BASE_URL =
+  (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_API_BASE_URL)
+    ? String((process as any).env.NEXT_PUBLIC_API_BASE_URL).replace(/\/$/, "")
+    : "";
+
+const api = (path: string) =>
+  `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
 // ユーティリティ
 const toMs = (s?: string) => (s ? new Date(s).getTime() : 0);
@@ -106,13 +112,25 @@ const AdminNotificationList = () => {
     try {
       setLoading(true);
       setError(null);
-      const data: Notification[] = await safeFetchJSON(`${API_BASE}/notifications`, {
-        credentials: "include",
-        signal: ac?.signal,
-        headers: { Accept: "application/json" },
-      });
-      data.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
-      setNotifications(data);
+      const res = await fetch(api("/api/notifications"), {
+  credentials: "include",
+  signal: ac?.signal,
+  headers: { Accept: "application/json" },
+});
+
+// 404 → “通知なし”として扱う（赤いエラーは出さない）
+if (res.status === 404) {
+  setNotifications([]);
+  return;
+}
+if (!res.ok) {
+  throw new Error(`HTTP ${res.status}`);
+}
+
+const data: Notification[] = await res.json();
+data.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+setNotifications(data);
+
     } catch (e: any) {
       if (e?.name !== "AbortError") {
         console.error(e);
@@ -133,7 +151,7 @@ const AdminNotificationList = () => {
 
   const markAsRead = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE}/notifications/${id}/read`, {
+      const res = await fetch(api(`/api/notifications/${id}/read`), {
         method: "POST",
         credentials: "include",
         headers: { Accept: "application/json" },
@@ -147,7 +165,7 @@ const AdminNotificationList = () => {
 
   const deleteNotification = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE}/notifications/${id}`, {
+      const res = await fetch(api(`/api/notifications/${id}`), {
         method: "DELETE",
         credentials: "include",
         headers: { Accept: "application/json" },

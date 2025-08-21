@@ -18,6 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import AdminManager from '../pages/AdminManager';
 import AdminPasswordChange from '../pages/AdminPasswordChange';
 import SecurityContract from '../pages/SecurityContract';
+import AdminPlanChange from '../AdminPlanChange';
 
 function AppLayout() {
   const location = useLocation();
@@ -74,14 +75,17 @@ function AppLayout() {
           </header>
         )}
 
-        <div className="flex">
+        <div className="flex min-h-0">
           {!isLoginPage && (
-            <div className="fixed top-16 left-0 h-[calc(100vh-4rem)] z-50">
-              <AdminSidebar hasUnreadChat={hasUnread} />
-            </div>
+            <div
+  className="fixed top-16 left-0 h-[calc(100vh-4rem)] w-[240px] overflow-y-auto min-h-0 z-50"
+  id="admin-sidebar-container"
+>
+  <AdminSidebar hasUnreadChat={hasUnread} />
+</div>
           )}
           <main
-  className={`bg-[#f1f5f9] p-4 md:p-6 overflow-x-auto overflow-y-auto z-10 ${
+  className={`bg-[#f1f5f9] p-4 md:p-6 min-h-0 overflow-x-auto overflow-y-auto z-10 ${
     !isLoginPage ? 'ml-[240px] mt-16' : ''
   } w-full`}
 >
@@ -104,6 +108,8 @@ function AppLayout() {
               <Route path="system-settings" element={<AdminSystemSettings />} />
               <Route path="password-change" element={<AdminPasswordChange />} />
               <Route path="security" element={<SecurityContract />} />
+              <Route path="plan" element={<AdminPlanChange />} /> {/* ★追加：プラン変更ページ */}
+              <Route path="*" element={<Navigate to="dashboard" />} />
             </Routes>
           </main>
         </div>
