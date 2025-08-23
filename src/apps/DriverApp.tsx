@@ -1,10 +1,13 @@
+// src/driver/App.tsx （あなたのファイル名に合わせて）
+import { useEffect } from "react";
 import { Routes, Route, Link, useLocation } from "react-router-dom";
-import { FileText, Clock, User, Truck } from "lucide-react";
+import { hardRefreshOnce } from "../utils/hardRefresh";
+import { FileText, FolderOpen, User, Truck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import DriverDashboard from "../pages/DriverDashboard";
+import DriverDailyReport from "../pages/DriverDashboard";        // ★ 新規
 import DriverProfile from "../pages/DriverProfile";
 import DriverProjectList from "../pages/DriverProjectList";
-import DriverWorkHistory from "../pages/DriverWorkHistory";
+import DriverFileManager from "../pages/DriverFileManager";        // ★ 新規
 import DriverDocumentUpload from "../pages/DriverDocumentUpload";
 import DriverPasswordChange from "../pages/DriverPasswordChange";
 import DriverPaymentPreview from "../pages/DriverPaymentPreview";
@@ -12,8 +15,14 @@ import DriverInvoiceCreator from "../pages/DriverInvoiceCreator";
 import DriverChatPage from "../pages/DriverChatPage";
 
 const App = () => {
-  const location = useLocation();
   const navigate = useNavigate();
+
+   // ★ デプロイ直後に強制リフレッシュ（SW解除＋Cache削除→一度だけリロード）
+  useEffect(() => {
+    if (!sessionStorage.getItem("__hard_refreshed__")) {
+      hardRefreshOnce();
+    }
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem("loggedInDriver");
@@ -23,7 +32,7 @@ const App = () => {
 
   return (
     <div className="w-full driver-container flex flex-col min-h-screen bg-white">
-      {/* ✅ ヘッダー */}
+      {/* ヘッダー */}
       <header className="bg-orange-300 flex justify-between items-center px-6 py-3 shadow fixed top-0 left-0 right-0 h-16 z-10">
         <div className="flex items-center gap-4">
           <img src="/logo.png" alt="ロゴ" className="h-10" />
@@ -44,10 +53,8 @@ const App = () => {
       </header>
 
       <div className="flex flex-1 min-h-0">
-        {/* ✅ サイドバー */}
-        <aside
-  className="w-64 bg-orange-100 p-4 shadow-md flex flex-col justify-between fixed top-16 left-0 h-[calc(100vh-64px)] overflow-y-auto overscroll-contain z-10"
->
+        {/* サイドバー */}
+        <aside className="w-64 bg-orange-100 p-4 shadow-md flex flex-col justify-between fixed top-16 left-0 h-[calc(100vh-64px)] overflow-y-auto overscroll-contain z-10">
           <div>
             <div className="text-sm font-bold mb-2 text-left text-black">メニュー</div>
             <hr className="border-orange-400 mb-4" />
@@ -60,9 +67,9 @@ const App = () => {
                 <FileText className="text-blue-400" size={18} />
                 チャット
               </Link>
-              <Link to="history" className="flex items-center justify-center gap-2 hover:underline">
-                <Clock className="text-purple-500" size={18} />
-                稼働履歴
+              <Link to="files" className="flex items-center justify-center gap-2 hover:underline">
+                <FolderOpen className="text-purple-500" size={18} />
+                ファイル管理
               </Link>
               <Link to="profile" className="flex items-center justify-center gap-2 hover:underline">
                 <User className="text-green-500" size={18} />
@@ -84,12 +91,12 @@ const App = () => {
           </div>
         </aside>
 
-        {/* ✅ メイン */}
+        {/* メイン */}
         <main className="flex-1 bg-orange-50 p-6 ml-64 mt-16 min-h-0 overflow-y-auto overflow-x-auto" style={{ minWidth: "1040px" }}>
           <Routes>
-            <Route path="/" element={<DriverDashboard />} />
-            <Route path="daily-report" element={<DriverDashboard />} />
-            <Route path="history" element={<DriverWorkHistory />} />
+            <Route path="/" element={<DriverDailyReport />} />
+            <Route path="daily-report" element={<DriverDailyReport />} />   {/* ⬅ 日報ページ */}
+            <Route path="files" element={<DriverFileManager />} />          {/* ⬅ ファイル管理 */}
             <Route path="profile" element={<DriverProfile />} />
             <Route path="projects" element={<DriverProjectList />} />
             <Route path="submit-documents" element={<DriverDocumentUpload />} />

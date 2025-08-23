@@ -2,8 +2,10 @@ import "server-only";
 import Parser from "rss-parser";
 import { adminDb } from "@/lib/firebaseAdmin";
 
-export const runtime = "nodejs";   // Edge不可（rss-parser対策）
-export const revalidate = 300;     // 5分キャッシュ
+// ★ Next.js のルートハンドラは revalidate よりも dynamic 指定の方が効く
+export const runtime = "nodejs";            // Edge不可（rss-parser対策）
+export const dynamic = "force-dynamic";     // 毎回サーバで実行
+// revalidate は pages/route によっては無視されることがあるため cache-control で制御する
 
 type FeedItem = {
   title?: string;
@@ -15,23 +17,32 @@ type FeedItem = {
 };
 type OutItem = { title: string; link: string; source: string; isoDate: string };
 
-// 公式ソース
+// 公式一次ソース（運送領域に直結）
 const SOURCES = [
-  { name: "国土交通省（プレス）", url: "https://www.mlit.go.jp/pressrelease.rdf" },
-  { name: "国土交通省（道路情報）", url: "https://www.mlit.go.jp/road/ir/ir-data/rss.xml" },
-  { name: "経済産業省（ニュース）", url: "https://www.meti.go.jp/ml_index_release_atom.xml" },
+  { name: "国土交通省（プレス）", url: "https://www.mlit.go.jp/page/rss/press.xml" },
+  { name: "国土交通省（新着）",   url: "https://www.mlit.go.jp/page/rss/news.xml" },
+  { name: "e-Gov（運送：結果）",  url: "https://public-comment.e-gov.go.jp/rss/pcm_result_0000000042.xml" },
 ];
 
-// 検索キーワード（最初はこれで絞り込み、件数少なければ全件も拾う）
+// 緊急バックアップ（ゼロ件回避用／公式リンクを手で入れてOK）
+const EMERGENCY_SEED: OutItem[] = [
+  // 必要に応じて差し替え
+  {
+    title: "（例）改正貨物自動車運送事業法 特設ページ",
+    link: "https://www.mlit.go.jp/jidosha/jidosha_tk6_000071.html",
+    source: "www.mlit.go.jp",
+    isoDate: "2025-04-01T00:00:00.000Z",
+  },
+];
+
 const KEYWORDS = [
   "燃料","ガソリン","軽油","石油","lpガス","lpg","燃料価格","補助","税","課税","炭素","カーボン","排出",
-  "運送","輸送","物流","トラック","貨物","自動車","道路運送法","安全","点呼","アルコール","改善基準","過労","標準的な運賃"
+  "運送","輸送","物流","トラック","貨物","自動車","道路運送法","安全","点呼","アルコール","改善基準","過労","標準的な運賃","2025年","2025/04"
 ];
 
 const UA = {
   "user-agent": "ComplianceDashboard/1.0 (+https://example.com) RSS-Parser",
-  "accept":
-    "application/rss+xml, application/atom+xml, application/rdf+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
+  "accept": "application/rss+xml, application/atom+xml, application/rdf+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
 };
 
 function toIso(d?: string | null) {
@@ -43,10 +54,8 @@ function hitKeyword(text: string) {
   const t = (text || "").toLowerCase();
   return KEYWORDS.some((k) => t.includes(k.toLowerCase()));
 }
-
-/** link から安定ID生成（FirestoreドキュメントIDに使う） */
 function linkId(link: string) {
-  return Buffer.from(link).toString("base64url"); // 衝突ほぼ無し
+  return Buffer.from(link).toString("base64url");
 }
 
 /** RSS/ATOM/RDF → 正規化（useKeyword=true でタイトルをキーワード絞り込み） */
@@ -78,7 +87,7 @@ async function fetchFeedItems(
     }
     return out;
   } catch (e) {
-    console.warn("parseURL failed, fallback to fetch+parseString:", url, e);
+    console.warn("[parseURL failed] fallback to fetch+parseString:", url, e);
   }
 
   // 2) フォールバック：fetch→parseString
@@ -116,7 +125,6 @@ async function fetchFeedItems(
 }
 
 async function crawlAndUpsertToDb() {
-  // UA/タイムアウト設定
   const parser = new Parser<any, FeedItem>({
     timeout: 10000,
     requestOptions: { headers: UA as any },
@@ -128,8 +136,9 @@ async function crawlAndUpsertToDb() {
     },
   });
 
-  // ①キーワード絞り込みで取得
   let collected: OutItem[] = [];
+
+  // ①キーワード絞り込みで取得
   for (const s of SOURCES) {
     try {
       const arr = await fetchFeedItems(s.url, s.name, parser, true);
@@ -138,8 +147,7 @@ async function crawlAndUpsertToDb() {
       console.error("Feed error:", s.url, e);
     }
   }
-
-  // 少なければ ②全件（キーワード無し）でもう一度
+  // 少なければ ②全件（キーワード無し）
   if (collected.length < 10) {
     for (const s of SOURCES) {
       try {
@@ -160,55 +168,75 @@ async function crawlAndUpsertToDb() {
     return true;
   });
 
-  // DBへ UPSERT（link をID化して set merge）
-  const batch = adminDb.batch();
-  for (const it of collected) {
-    const id = linkId(it.link);
-    const ref = adminDb.collection("news").doc(id);
-    batch.set(
-      ref,
-      {
-        title: it.title,
-        link: it.link,
-        source: it.source,
-        isoDate: it.isoDate,            // ISO文字列で保存（クエリしやすい）
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+  // 新しい順に
+  collected.sort((a, b) => new Date(b.isoDate).getTime() - new Date(a.isoDate).getTime());
+
+  // DBへ UPSERT（link をID化して set merge）— DBがNGでも画面は直返しで出すので try/catch
+  if (collected.length) {
+    try {
+      const batch = adminDb.batch();
+      for (const it of collected) {
+        const id = linkId(it.link);
+        const ref = adminDb.collection("news").doc(id);
+        batch.set(
+          ref,
+          { title: it.title, link: it.link, source: it.source, isoDate: it.isoDate, updatedAt: new Date().toISOString() },
+          { merge: true }
+        );
+      }
+      await batch.commit();
+    } catch (e) {
+      console.error("[news] upsert failed (ignored for response)", e);
+    }
   }
-  await batch.commit();
+
+  return collected; // 直返しフォールバック用に返す
 }
 
+// DBを介さず即返し（crawlAndUpsertToDb の戻り値を使う）
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") || 5))); // デフォ5
-  const cursor = url.searchParams.get("cursor"); // 例: 2024-05-01T00:00:00.000Z より古いもの
+  const limit  = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") || 5)));
+  const cursor = url.searchParams.get("cursor");
+  const force  = url.searchParams.get("force") === "1";
 
-  // 1) 取得してDBに upsert（失敗しても無視して続行）
+  // 1) 取得（毎回試行）— 結果は返却にも使う
+  let crawled: OutItem[] = [];
   try {
-    await crawlAndUpsertToDb();
+    crawled = await crawlAndUpsertToDb();
   } catch (e) {
     console.error("[news] crawl failed", e);
   }
 
-  // 2) DBから「最新→過去」ページングで読む
-  let q = adminDb.collection("news").orderBy("isoDate", "desc");
-  if (cursor) {
-    // cursor より "古い" ものを続きとして取得
-    q = q.where("isoDate", "<", cursor).orderBy("isoDate", "desc");
+  // 2) DBから最新を読む（cursor指定があれば続き）
+  let items: OutItem[] = [];
+  try {
+    let q = adminDb.collection("news").orderBy("isoDate", "desc");
+    if (cursor) q = q.where("isoDate", "<", cursor).orderBy("isoDate", "desc");
+    const snap = await q.limit(limit).get();
+    items = snap.docs.map((d) => d.data() as OutItem);
+  } catch (e) {
+    console.error("[news] read DB failed (falling back to crawled)", e);
   }
-  const snap = await q.limit(limit).get();
-  const items = snap.docs.map((d) => d.data() as OutItem);
 
-  // 3) nextCursor を返す（次ページの起点）
+  // 3) DBが空のときは crawl の結果から直返し
+  if (items.length === 0) {
+    if (crawled.length === 0 && EMERGENCY_SEED.length) {
+      items = EMERGENCY_SEED.slice(0, limit);
+    } else {
+      // crawled が多い場合は最新順にソートのうえ limit
+      crawled.sort((a, b) => new Date(b.isoDate).getTime() - new Date(a.isoDate).getTime());
+      items = crawled.slice(0, limit);
+    }
+  }
+
   const nextCursor = items.length > 0 ? items[items.length - 1].isoDate : null;
 
-  return new Response(JSON.stringify({ items, nextCursor }), {
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "public, s-maxage=300, stale-while-revalidate=300",
-    },
-    status: 200,
-  });
+  const headers: Record<string,string> = {
+    "content-type": "application/json; charset=utf-8",
+    // force=1 のときは CDN キャッシュ回避
+    "cache-control": force ? "no-store" : "public, s-maxage=300, stale-while-revalidate=300",
+  };
+
+  return new Response(JSON.stringify({ items, nextCursor }), { headers, status: 200 });
 }

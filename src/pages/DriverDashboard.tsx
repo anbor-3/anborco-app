@@ -1,265 +1,496 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import html2pdf from "html2pdf.js";
-import JSZip from "jszip";
-import { saveAs } from "file-saver";
-import { saveDailyReport } from "../utils/fileUtils";
-import { runArchiveIfNeeded } from "../utils/fileUtils";
+import { uploadDailyReport } from "../utils/reportUploader";
 
-const DriverDashboard = () => {
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
-  const [time, setTime] = useState("");
-  const reportRef = useRef(null);
+export default function DriverDashboard() {
+  /* ===== ユーザー・基本 ===== */
+  const currentUser = useMemo(
+    () => JSON.parse(localStorage.getItem("currentUser") || "{}"),
+    []
+  );
+  const company: string = currentUser?.company || "default";
+  const driverName: string = currentUser?.name || "名無し";
+  const driverId: string = currentUser?.uid || currentUser?.id || "driver001";
 
-  const userName = "山田太郎";
-  const company = "株式会社Anbor";
+  /* ===== 日付・時計 ===== */
+  const [selectedDate, setSelectedDate] = useState<string>(
+    new Date().toISOString().slice(0, 10)
+  );
+  const [clock, setClock] = useState<string>("");
 
-  const days = [...Array(7)].map((_, i) => {
-    const date = new Date();
-    date.setDate(date.getDate() - 6 + i);
-    return date.toISOString().slice(0, 10);
-  });
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = new Date().toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo" });
-      setTime(now);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
-useEffect(() => {
-  runArchiveIfNeeded(); // ← 1日 or 1/1 に ZIP実行
-}, []);
-  const [tempCheck, setTempCheck] = useState("OK");
-  const [alcoholCheck, setAlcoholCheck] = useState("OK");
+  /* ===== 入力（PDFに載る） ===== */
+  const [tempCheck, setTempCheck] = useState<"OK" | "NG">("OK");
+  const [alcoholCheck, setAlcoholCheck] = useState<"OK" | "NG">("OK");
   const [reason, setReason] = useState("");
-  const [startDistance, setStartDistance] = useState("");
-  const [endDistance, setEndDistance] = useState("");
-  const [timestamps, setTimestamps] = useState({ start: "", breakStart: "", breakEnd: "", end: "" });
-  const [clicked, setClicked] = useState({ start: false, breakStart: false, breakEnd: false, end: false });
+  const [startDistance, setStartDistance] = useState<string>("");
+  const [endDistance, setEndDistance] = useState<string>("");
 
-  const handleTimestamp = (key) => {
-    const now = new Date().toLocaleTimeString();
-    setTimestamps({ ...timestamps, [key]: now });
-    setClicked({ ...clicked, [key]: true });
-  };
-const [paymentPdf, setPaymentPdf] = useState<{ dataUrl: string; ym: string; fileName: string } | null>(null);
+  const [odomStartImg, setOdomStartImg] = useState<string>("");
+  const [odomEndImg, setOdomEndImg] = useState<string>("");
 
-useEffect(() => {
-  const driver = userName;
-  const year = new Date().getFullYear();
-  const month = String(new Date().getMonth() + 1).padStart(2, "0");
-  const key = `payment_${year}_${month}_${driver}`;
-  const dataUrl = localStorage.getItem(key);
-  if (dataUrl) {
-    setPaymentPdf({
-      dataUrl,
-      ym: `${year}年${month}月`,
-      fileName: `${driver}_支払明細書.pdf`,
-    });
-  }
-}, []);
-
-  const cancelTimestamp = (key) => {
-    setTimestamps({ ...timestamps, [key]: "" });
-    setClicked({ ...clicked, [key]: false });
-  };
-
-  const handleSubmit = () => {
-  const dateJP = new Date(selectedDate).toLocaleDateString("ja-JP", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
+  const [timestamps, setTimestamps] = useState<{ [k: string]: string }>({
+    start: "",
+    breakStart: "",
+    breakEnd: "",
+    end: "",
   });
-  const fileName = `${dateJP}_${userName}_日報.pdf`;
 
-  const element = reportRef.current;
-  const opt = {
-    margin: 0.5,
-    filename: fileName,
-    image: { type: "jpeg", quality: 0.98 },
-    html2canvas: { scale: 2 },
-    jsPDF: { unit: "in", format: "a4", orientation: "portrait" }
-  };
-  
-  html2pdf().set(opt).from(element).outputPdf("blob").then((blob) => {
-  const reader = new FileReader();
-  reader.onloadend = () => {
-    const base64 = reader.result as string;
-    saveDailyReport({
-  driverId: "driver001", // ← 実際はログイン中のドライバーIDを使う
-  driverName: userName,  // ← "山田太郎"
-  date: selectedDate,    // ← "2025-06-25" など
-  fileName: fileName,    // ← "2025年06月25日_山田太郎_日報.pdf"
-  dataUrl: base64        // ← base64形式PDF（dataURL）
-});
-    const now = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
+  /* ===== プレビュー ===== */
+  const printRef = useRef<HTMLDivElement>(null);
+  const [preview, setPreview] = useState<{
+    open: boolean;
+    dataUrl: string;
+    fileName: string;
+  }>({ open: false, dataUrl: "", fileName: "" });
 
-    // ✅ driverHistory に Base64 付きで保存
-    const driverHistory = JSON.parse(localStorage.getItem("driverHistory") || "[]");
-    driverHistory.push({
-      date: selectedDate,
-      name: userName,
-      submittedAt: now,
-      fileName: fileName,
-      fileData: base64,  // ← base64を保存
-    });
-    localStorage.setItem("driverHistory", JSON.stringify(driverHistory));
+  /* ===== 時計描画 ===== */
+  useEffect(() => {
+    const t = setInterval(() => {
+      setClock(
+        new Date().toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo" })
+      );
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
 
-    // ✅ 管理者への通知
-    const notifications = JSON.parse(localStorage.getItem("notifications") || "[]");
-    notifications.push({
-      id: Date.now(),
-      type: "report",
-      category: "日報提出",
-      message: `${userName} が ${dateJP} に日報を提出しました。`,
-      target: userName,
-      timestamp: new Date().toISOString(),
-      read: false
-    });
-    localStorage.setItem("notifications", JSON.stringify(notifications));
+  /* ===== 便利関数 ===== */
+  function stamp(key: "start" | "breakStart" | "breakEnd" | "end") {
+    setTimestamps((s) => ({
+      ...s,
+      [key]: new Date().toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo" }),
+    }));
+  }
+  function cancel(key: "start" | "breakStart" | "breakEnd" | "end") {
+    setTimestamps((s) => ({ ...s, [key]: "" }));
+  }
 
-    // ✅ 月ごとのファイル管理
-    const monthKey = `reports_${selectedDate.slice(0, 7)}`;
-    const monthlyReports = JSON.parse(localStorage.getItem(monthKey) || "[]");
-    monthlyReports.push({
-      date: selectedDate,
-      fileName: fileName,
-      driver: userName
-    });
-    localStorage.setItem(monthKey, JSON.stringify(monthlyReports));
+  const kmStart = Number(startDistance || "");
+  const kmEnd = Number(endDistance || "");
+  const kmDiff =
+    Number.isFinite(kmStart) && Number.isFinite(kmEnd) && kmEnd >= kmStart
+      ? kmEnd - kmStart
+      : null;
 
-    // ✅ 毎月1日に ZIP を作成
-    const today = new Date();
-    if (today.getDate() === 1) {
-      const prev = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      const prevMonthKey = `reports_${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
-      const reports = JSON.parse(localStorage.getItem(prevMonthKey) || "[]");
-      if (reports.length > 0) {
-        const zip = new JSZip();
-        reports.forEach((r: any) => {
-          zip.file(r.fileName, `この ZIP はファイル名のみ保存\n${r.fileName}`);
-        });
-        zip.generateAsync({ type: "blob" }).then((zipBlob) => {
-          saveAs(zipBlob, `${prevMonthKey}_日報.zip`);
-        });
-      }
+  const issues = useMemo(() => {
+    const arr: string[] = [];
+    if (tempCheck === "NG") arr.push("検温チェック：NG");
+    if (alcoholCheck === "NG") arr.push("アルコールチェック：NG");
+    // 必須のときに理由が未入力
+    if ((tempCheck === "NG" || alcoholCheck === "NG") && !reason.trim()) {
+      arr.push("NG理由の未入力");
     }
+    return arr;
+  }, [tempCheck, alcoholCheck, reason]);
 
-    alert("日報提出と保存が完了しました！");
-  };
+  const allClear = issues.length === 0;
 
-  reader.readAsDataURL(blob); // ← base64 へ変換開始
-});
-};
+  /* ===== ファイル → dataURL ===== */
+  function fileToDataUrl(file: File, setter: (v: string) => void) {
+    const r = new FileReader();
+    r.onload = () => setter(String(r.result || ""));
+    r.readAsDataURL(file);
+  }
 
+  /* ===== PDF生成→プレビュー ===== */
+  async function handlePreview() {
+    const jp = new Date(selectedDate).toLocaleDateString("ja-JP", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const fileName = `${jp}_${driverName}_日報.pdf`;
+    if (!printRef.current) return;
+
+    const opt = {
+      margin: 0.35,
+      filename: fileName,
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
+    } as any;
+
+    const blob: Blob = await (html2pdf() as any)
+      .set(opt)
+      .from(printRef.current)
+      .outputPdf("blob");
+
+    const dataUrl = await new Promise<string>((resolve) => {
+      const r = new FileReader();
+      r.onloadend = () => resolve(r.result as string);
+      r.readAsDataURL(blob);
+    });
+    setPreview({ open: true, dataUrl, fileName });
+  }
+
+  /* ===== 送信 ===== */
+  async function handleSend() {
+    try {
+      await uploadDailyReport({
+        company,
+        driverId,
+        driverName,
+        date: selectedDate,
+        dataUrl: preview.dataUrl,
+      });
+      setPreview({ open: false, dataUrl: "", fileName: "" });
+      alert("✅ 日報を送信しました（ファイル管理に反映）");
+    } catch (e) {
+      console.error(e);
+      alert("送信に失敗しました。通信状況/権限をご確認ください。");
+    }
+  }
+
+  /* ===== 最近7日 ===== */
+  const recent7 = [...Array(7)].map((_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    return d.toISOString().slice(0, 10);
+  });
+
+  /* ===== PDF化される領域 ===== */
   return (
-    <div ref={reportRef} className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-800">🚚 日報提出<span className="text-sm text-gray-500">- Driver Dashboard-</span></h1>
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-gray-800">
+        🚚 日報提出 <span className="text-sm text-gray-500">- Driver Dashboard -</span>
+      </h1>
 
-      {/* 本日のシフト情報 */}
-      <section className="bg-white rounded shadow p-4">
-        <div className="flex justify-between items-center mb-4">
+      {/* ===================== PDF本体（printRef） ===================== */}
+      <div ref={printRef} className="bg-white rounded-xl shadow p-6 print:p-6">
+        {/* ヘッダー */}
+        <div className="flex items-start justify-between mb-4">
           <div>
-            <label className="block text-sm text-gray-600">日付を選択：</label>
-            <select value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="border rounded p-1">
-              {days.map((d) => (
-                <option key={d} value={d}>{new Date(d).toLocaleDateString("ja-JP")}</option>
-              ))}
-            </select>
+            <div className="text-xl font-extrabold tracking-wide">
+              {company}
+            </div>
+            <div className="text-sm text-gray-500">ドライバー日報（A4）</div>
           </div>
-          <div className="text-sm text-gray-600">現在時刻（日本時間）：<span className="font-mono">{time}</span></div>
-        </div>
-        <p className="text-gray-600">案件情報を読み込み中...</p>
-      </section>
-
-      {/* 体調報告 */}
-      <section className="bg-white p-4 rounded shadow">
-        <h2 className="font-semibold mb-2">体調報告</h2>
-        <label>検温チェック：
-          <select value={tempCheck} onChange={e => setTempCheck(e.target.value)} className="ml-2 border rounded">
-            <option value="OK">OK</option>
-            <option value="NG">NG</option>
-          </select>
-        </label>
-        <br />
-        <label>アルコールチェック：
-          <select value={alcoholCheck} onChange={e => setAlcoholCheck(e.target.value)} className="ml-2 border rounded">
-            <option value="OK">OK</option>
-            <option value="NG">NG</option>
-          </select>
-        </label>
-        {(tempCheck === "NG" || alcoholCheck === "NG") && (
-          <input type="text" placeholder="NG理由を入力" value={reason} onChange={e => setReason(e.target.value)} className="mt-2 border rounded w-full p-1" />
-        )}
-      </section>
-    
-      {/* 走行距離入力 */}
-      <section className="grid grid-cols-2 gap-6">
-        <div className="bg-white p-4 rounded shadow">
-          <h2 className="font-semibold mb-2">走行距離</h2>
-          <input type="number" placeholder="開始距離" value={startDistance} onChange={e => setStartDistance(e.target.value)} className="border rounded w-full mb-2 p-1" />
-          <input type="number" placeholder="終了距離" value={endDistance} onChange={e => setEndDistance(e.target.value)} className="border rounded w-full p-1" />
+          <div className="text-right">
+            <div className="text-sm text-gray-600">
+              日本時間：<span className="font-mono">{clock}</span>
+            </div>
+            <div className="mt-1">
+              <label className="text-sm text-gray-600 mr-2">日付：</label>
+              <span className="px-2 py-1 rounded border font-medium">
+                {new Date(selectedDate).toLocaleDateString("ja-JP")}
+              </span>
+            </div>
+          </div>
         </div>
 
-        <div className="bg-white p-4 rounded shadow">
-          <h2 className="font-semibold mb-2">走行距離の写真</h2>
-          <input type="file" accept="image/*" capture="environment" className="w-full border p-1 rounded" />
-          <input type="file" accept="image/*" capture="environment" className="w-full border p-1 rounded mt-2" />
+        {/* ステータスバナー */}
+        <div
+          className={`rounded-lg px-4 py-3 mb-4 border ${
+            allClear
+              ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+              : "bg-rose-50 border-rose-200 text-rose-900"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">
+              {allClear ? "✅ 問題なし（ALL CLEAR）" : "⚠️ 要対応（ISSUES FOUND）"}
+            </div>
+            <div className="text-xs opacity-80">
+              ドライバー：{driverName}
+            </div>
+          </div>
+          {!allClear && (
+            <ul className="list-disc pl-5 text-sm mt-1">
+              {issues.map((it, i) => (
+                <li key={i}>{it}</li>
+              ))}
+            </ul>
+          )}
         </div>
-      </section>
 
-      {/* 勤務状況ボタン（リアルタイム記録） */}
-      <section className="bg-white p-4 rounded shadow space-y-2">
-        <h2 className="font-semibold mb-2">勤務ステータス（リアルタイム記録）</h2>
-        {["start", "breakStart", "breakEnd", "end"].map((key) => {
-          const labels = {
-            start: "稼働開始",
-            breakStart: "休憩開始",
-            breakEnd: "休憩終了",
-            end: "稼働終了",
-          };
-          return (
-            <div key={key} className="flex justify-between items-center">
-              <button
-                onClick={() => handleTimestamp(key)}
-                disabled={clicked[key]}
-                className={`px-4 py-1 rounded shadow ${clicked[key] ? "bg-gray-300" : "bg-orange-500 text-white"}`}
-              >
-                {labels[key]}
-              </button>
-              <span>{timestamps[key]}</span>
-              {clicked[key] && (
-                <button onClick={() => cancelTimestamp(key)} className="text-sm text-blue-600 underline">取消</button>
+        {/* 情報ブロック */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+          {/* 体調・点呼 */}
+          <section className="rounded-lg border p-3">
+            <h3 className="font-semibold mb-2">体調・点呼</h3>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span>検温</span>
+                <span
+                  className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    tempCheck === "OK" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                  }`}
+                >
+                  {tempCheck}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>アルコール</span>
+                <span
+                  className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    alcoholCheck === "OK" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                  }`}
+                >
+                  {alcoholCheck}
+                </span>
+              </div>
+              {(tempCheck === "NG" || alcoholCheck === "NG") && (
+                <div className="mt-2">
+                  <div className="text-xs text-gray-500 mb-1">NG理由</div>
+                  <div className="border rounded p-2 min-h-[40px]">
+                    {reason || <span className="text-gray-400">（未入力）</span>}
+                  </div>
+                </div>
               )}
             </div>
-          );
-        })}
+          </section>
+
+          {/* 走行距離 */}
+          <section className="rounded-lg border p-3">
+            <h3 className="font-semibold mb-2">走行距離</h3>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="border rounded p-2">
+                <div className="text-xs text-gray-500">開始距離</div>
+                <div className="text-lg font-semibold">
+                  {startDistance ? `${startDistance} km` : "-"}
+                </div>
+              </div>
+              <div className="border rounded p-2">
+                <div className="text-xs text-gray-500">終了距離</div>
+                <div className="text-lg font-semibold">
+                  {endDistance ? `${endDistance} km` : "-"}
+                </div>
+              </div>
+              <div className="col-span-2 border rounded p-2">
+                <div className="text-xs text-gray-500">走行距離（自動計算）</div>
+                <div
+                  className={`text-2xl font-extrabold ${
+                    kmDiff === null ? "text-gray-400" : "text-blue-700"
+                  }`}
+                >
+                  {kmDiff === null ? "-" : `${kmDiff} km`}
+                </div>
+              </div>
+            </div>
+
+            {(odomStartImg || odomEndImg) && (
+              <div className="mt-3">
+                <div className="text-xs text-gray-500 mb-1">メーター写真</div>
+                <div className="flex gap-3">
+                  {odomStartImg && (
+                    <div className="w-32 h-20 border rounded overflow-hidden">
+                      <img src={odomStartImg} alt="開始メーター" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                  {odomEndImg && (
+                    <div className="w-32 h-20 border rounded overflow-hidden">
+                      <img src={odomEndImg} alt="終了メーター" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* タイムライン */}
+        <section className="rounded-lg border p-3 mt-4">
+          <h3 className="font-semibold mb-2">勤務タイムライン</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+            <div className="border rounded p-2">
+              <div className="text-xs text-gray-500">稼働開始</div>
+              <div className="font-mono">{timestamps.start || "-"}</div>
+            </div>
+            <div className="border rounded p-2">
+              <div className="text-xs text-gray-500">休憩開始</div>
+              <div className="font-mono">{timestamps.breakStart || "-"}</div>
+            </div>
+            <div className="border rounded p-2">
+              <div className="text-xs text-gray-500">休憩終了</div>
+              <div className="font-mono">{timestamps.breakEnd || "-"}</div>
+            </div>
+            <div className="border rounded p-2">
+              <div className="text-xs text-gray-500">稼働終了</div>
+              <div className="font-mono">{timestamps.end || "-"}</div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {/* ===================== 入力UI（PDF外） ===================== */}
+      <section className="bg-white rounded-xl shadow p-5">
+        <h2 className="font-semibold mb-3">入力</h2>
+
+        {/* 日付 */}
+        <div className="mb-3">
+          <label className="text-sm text-gray-600 mr-2">日付選択：</label>
+          <select
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            className="border rounded px-2 py-1"
+          >
+            {recent7.map((d) => (
+              <option key={d} value={d}>
+                {new Date(d).toLocaleDateString("ja-JP")}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* 健康・点呼 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <label className="flex items-center gap-2">
+            検温：
+            <select
+              className="border rounded p-1"
+              value={tempCheck}
+              onChange={(e) => setTempCheck(e.target.value as "OK" | "NG")}
+            >
+              <option>OK</option>
+              <option>NG</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
+            アルコール：
+            <select
+              className="border rounded p-1"
+              value={alcoholCheck}
+              onChange={(e) => setAlcoholCheck(e.target.value as "OK" | "NG")}
+            >
+              <option>OK</option>
+              <option>NG</option>
+            </select>
+          </label>
+        </div>
+        {(tempCheck === "NG" || alcoholCheck === "NG") && (
+          <input
+            className="border rounded p-2 w-full mt-2 text-sm"
+            placeholder="NG理由を入力"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        )}
+
+        {/* 走行距離 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm mt-3">
+          <input
+            className="border rounded p-2"
+            type="number"
+            placeholder="開始距離 (km)"
+            value={startDistance}
+            onChange={(e) => setStartDistance(e.target.value)}
+          />
+          <input
+            className="border rounded p-2"
+            type="number"
+            placeholder="終了距離 (km)"
+            value={endDistance}
+            onChange={(e) => setEndDistance(e.target.value)}
+          />
+        </div>
+
+        {/* メーター写真（任意） */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm mt-3">
+          <div>
+            <div className="text-xs text-gray-600 mb-1">開始メーター写真（任意）</div>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) fileToDataUrl(f, setOdomStartImg);
+              }}
+              className="block w-full text-sm"
+            />
+          </div>
+          <div>
+            <div className="text-xs text-gray-600 mb-1">終了メーター写真（任意）</div>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) fileToDataUrl(f, setOdomEndImg);
+              }}
+              className="block w-full text-sm"
+            />
+          </div>
+        </div>
+
+        {/* タイムスタンプ */}
+        <div className="mt-4 space-x-2">
+          <button
+            className="px-3 py-1.5 bg-orange-600 text-white rounded"
+            onClick={() => stamp("start")}
+          >
+            稼働開始
+          </button>
+          <button
+            className="px-3 py-1.5 bg-orange-600 text-white rounded"
+            onClick={() => stamp("breakStart")}
+          >
+            休憩開始
+          </button>
+          <button
+            className="px-3 py-1.5 bg-orange-600 text-white rounded"
+            onClick={() => stamp("breakEnd")}
+          >
+            休憩終了
+          </button>
+          <button
+            className="px-3 py-1.5 bg-orange-600 text-white rounded"
+            onClick={() => stamp("end")}
+          >
+            稼働終了
+          </button>
+
+          <button className="px-2 py-1 border rounded ml-3" onClick={() => cancel("start")}>
+            開始取消
+          </button>
+          <button className="px-2 py-1 border rounded" onClick={() => cancel("breakStart")}>
+            休憩開始取消
+          </button>
+          <button className="px-2 py-1 border rounded" onClick={() => cancel("breakEnd")}>
+            休憩終了取消
+          </button>
+          <button className="px-2 py-1 border rounded" onClick={() => cancel("end")}>
+            終了取消
+          </button>
+        </div>
+
+        {/* プレビュー */}
+        <div className="mt-5">
+          <button
+            onClick={handlePreview}
+            className="px-4 py-2 bg-blue-700 text-white rounded shadow"
+          >
+            PDFを作ってプレビュー
+          </button>
+        </div>
       </section>
 
-      {/* 日報提出ボタン */}
-      <section className="bg-white p-4 rounded shadow">
-        <h2 className="text-lg font-semibold text-gray-700">本日の日報</h2>
-        <p className="text-gray-600">未提出です。</p>
-        <button onClick={handleSubmit} className="mt-2 px-4 py-2 bg-blue-600 text-white rounded shadow">
-          日報を提出（PDF出力）
-        </button>
-      </section>
-      {/* ✅ 支払明細書プレビュー + 請求書作成確認ボタン */}
-{paymentPdf && (
-  <section className="bg-white p-4 rounded shadow">
-    <h2 className="text-lg font-bold mb-2">📄 支払明細書プレビュー（{paymentPdf.ym}）</h2>
-    <p className="mb-2">{paymentPdf.fileName}</p>
-    <iframe src={paymentPdf.dataUrl} className="w-full h-96 border mb-4" title="支払明細書プレビュー" />
-    <button
-      className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
-      onClick={() => alert("この内容で請求書を作成します（次ステップへ）")}
-    >
-      この内容で請求書を作成する
-    </button>
-  </section>
-)}
+      {/* ===================== プレビューモーダル ===================== */}
+      {preview.open && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white w-full max-w-4xl h-[80vh] rounded shadow flex flex-col">
+            <div className="p-3 border-b flex items-center justify-between">
+              <h3 className="font-semibold">📄 プレビュー：{preview.fileName}</h3>
+              <button
+                className="text-red-600"
+                onClick={() => setPreview({ open: false, dataUrl: "", fileName: "" })}
+              >
+                閉じる
+              </button>
+            </div>
+            <iframe src={preview.dataUrl} className="flex-1 w-full" title="日報プレビュー" />
+            <div className="p-3 border-t flex justify-end gap-2">
+              <button
+                className="px-4 py-2 border rounded"
+                onClick={() => setPreview({ open: false, dataUrl: "", fileName: "" })}
+              >
+                やり直す
+              </button>
+              <button className="px-4 py-2 bg-green-600 text-white rounded" onClick={handleSend}>
+                この内容で送信
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-};
-
-export default DriverDashboard;
+}
