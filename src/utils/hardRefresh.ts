@@ -1,4 +1,4 @@
-// 強制反映：SWの解除＋Cache削除 → リロード（1回だけ）
+// 強制反映：SWの解除＋Cache削除 → 一度だけ安全にリロード
 export async function hardRefreshOnce() {
   try {
     // 1) Service Worker を全解除
@@ -15,11 +15,12 @@ export async function hardRefreshOnce() {
     console.warn("[hardRefreshOnce] cleanup failed", e);
   }
 
-  // 3) 1回だけ実行するためセッションフラグ
+  // 3) 一度だけ実行した印
   sessionStorage.setItem("__hard_refreshed__", "1");
 
-  // 4) キャッシュバスター付きでリロード
+  // 4) ★ 404回避のため必ずルートへ戻してからバスター付きでリロード
   const u = new URL(window.location.href);
+  u.pathname = "/"; // ← ここがポイント
   u.searchParams.set("__bust", String(Date.now()));
   window.location.replace(u.toString());
 }
