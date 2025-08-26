@@ -70,58 +70,92 @@ async function apiJSON<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { Accept: "application/json", ...(init?.headers || {}) },
     ...init,
   });
+
   if (!res.ok) {
-    let msg = `HTTP ${res.status} at ${url}`;
-    try {
-      const j = await res.json();
-      if (j?.message) msg = j.message;
-    } catch {}
-    const err = new Error(msg) as Error & { status?: number };
+    // エラー本文も拾う（HTMLが返ってきた場合の原因確認用）
+    const text = await res.text().catch(() => "");
+    const err: any = new Error(`HTTP ${res.status} at ${url}\n${text.slice(0, 200)}`);
     err.status = res.status;
     throw err;
   }
-  // 204 や空ボディ対応
-  if (res.status === 204) return {} as T;
-  const text = await res.text();
-  return (text ? JSON.parse(text) : ({} as T));
+
+  // ★ JSON以外（例: index.html）が返ってきたら即エラー化
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    const text = await res.text().catch(() => "");
+    const err: any = new Error(
+      `Expected JSON but got "${ct || "unknown"}" from ${url}\n` + text.slice(0, 200)
+    );
+    err.status = 415; // 非JSON検出の合図として 415 を使用
+    throw err;
+  }
+
+  return res.json();
 }
+
+import { getAuth } from "firebase/auth";
 
 const VehiclesAPI = {
   list: async (company: string) => {
-    const data = await apiJSON<any>(`/api/vehicles?company=${encodeURIComponent(company)}`);
-    return Array.isArray(data) ? (data as Vehicle[]) : [];
+    const idToken = await getAuth().currentUser?.getIdToken?.();
+    return apiJSON<Vehicle[]>(
+      `/api/vehicles?company=${encodeURIComponent(company)}`,
+      { headers: idToken ? { Authorization: `Bearer ${idToken}` } : {} }
+    );
   },
 
-  create: (v: Omit<Vehicle, "id" | "attachments"> & { attachments?: Attachment[] }) =>
-    apiJSON<Vehicle>(`/api/vehicles`, {
+  create: async (v: Omit<Vehicle, "id" | "attachments"> & { attachments?: Attachment[] }) => {
+    const idToken = await getAuth().currentUser?.getIdToken?.();
+    return apiJSON<Vehicle>(`/api/vehicles`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      },
       body: JSON.stringify(v),
-    }),
+    });
+  },
 
-  update: (id: number, v: Partial<Vehicle>) =>
-    apiJSON<Vehicle>(`/api/vehicles/${id}`, {
+  update: async (id: number, v: Partial<Vehicle>) => {
+    const idToken = await getAuth().currentUser?.getIdToken?.();
+    return apiJSON<Vehicle>(`/api/vehicles/${id}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      },
       body: JSON.stringify(v),
-    }),
+    });
+  },
 
-  remove: (id: number) =>
-    apiJSON<{}>(`/api/vehicles/${id}`, { method: "DELETE" }),
+  remove: async (id: number) => {
+    const idToken = await getAuth().currentUser?.getIdToken?.();
+    return apiJSON<{}>(`/api/vehicles/${id}`, {
+      method: "DELETE",
+      headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
+    });
+  },
 
-  uploadAttachments: (id: number, files: File[]) => {
+  uploadAttachments: async (id: number, files: File[]) => {
+    const idToken = await getAuth().currentUser?.getIdToken?.();
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
     return apiJSON<Attachment[]>(`/api/vehicles/${id}/attachments`, {
       method: "POST",
+      headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
       body: fd,
     });
   },
 };
 
 const DriversAPI = {
-  list: (company: string) =>
-    apiJSON<Driver[]>(`/api/drivers?company=${encodeURIComponent(company)}`),
+  list: async (company: string) => {
+    const idToken = await getAuth().currentUser?.getIdToken?.();
+    return apiJSON<Driver[]>(
+      `/api/drivers?company=${encodeURIComponent(company)}`,
+      { headers: idToken ? { Authorization: `Bearer ${idToken}` } : {} }
+    );
+  },
 };
 
 /* ========================= Utils ========================= */
@@ -197,26 +231,25 @@ React.useEffect(() => {
           DriversAPI.list(company),
         ]);
       } catch (e: any) {
-        // API が未実装/未配備などで 404 の場合のみ、ローカルへフォールバック
-        if (e?.status === 404) {
-          const localVehicles = JSON.parse(
-            localStorage.getItem(vehicleStorageKey(company)) || "[]"
-          ) as Vehicle[];
-          const localDriversRaw = JSON.parse(
-            localStorage.getItem("driverList") || "[]"
-          ) as Array<{ id?: string; name?: string }>;
+  // 404（API未配備）または 415（HTML返却などJSONでない）ならローカルへフォールバック
+  if (e?.status === 404 || e?.status === 415) {
+    const localVehicles = JSON.parse(
+      localStorage.getItem(vehicleStorageKey(company)) || "[]"
+    ) as Vehicle[];
+    const localDriversRaw = JSON.parse(
+      localStorage.getItem("driverList") || "[]"
+    ) as Array<{ id?: string; name?: string }>;
 
-          vList = Array.isArray(localVehicles) ? localVehicles : [];
-          dList = Array.isArray(localDriversRaw)
-            ? localDriversRaw
-                .filter((x) => x && x.name)
-                .map((x, i) => ({ id: x.id ?? String(i + 1), name: x.name! }))
-            : [];
-        } else {
-          throw e; // 404 以外はそのままエラー
-        }
-      }
-
+    vList = Array.isArray(localVehicles) ? localVehicles : [];
+    dList = Array.isArray(localDriversRaw)
+      ? localDriversRaw
+          .filter((x) => x && x.name)
+          .map((x, i) => ({ id: x.id ?? String(i + 1), name: x.name! }))
+      : [];
+  } else {
+    throw e;
+  }
+}
       if (!aborted) {
         setVehicles(vList ?? []);
         setDrivers(dList ?? []);
@@ -241,20 +274,19 @@ React.useEffect(() => {
       setVehicles(vList ?? []);
       setDrivers(dList ?? []);
     } catch (e: any) {
-      if (e?.status === 404) {
-        const localV = JSON.parse(localStorage.getItem(vehicleStorageKey(company)) || "[]") as Vehicle[];
-        const localDRaw = JSON.parse(localStorage.getItem("driverList") || "[]") as Array<{ id?: string; name?: string }>;
-        setVehicles(Array.isArray(localV) ? localV : []);
-        setDrivers(
-          Array.isArray(localDRaw)
-            ? localDRaw.filter(x => x && x.name).map((x, i) => ({ id: x.id ?? String(i + 1), name: x.name! }))
-            : []
-        );
-      } else {
-        // 他のエラーは握りつぶさずログる
-        console.error(e);
-      }
-    }
+  if (e?.status === 404 || e?.status === 415) {
+    const localV = JSON.parse(localStorage.getItem(vehicleStorageKey(company)) || "[]") as Vehicle[];
+    const localDRaw = JSON.parse(localStorage.getItem("driverList") || "[]") as Array<{ id?: string; name?: string }>;
+    setVehicles(Array.isArray(localV) ? localV : []);
+    setDrivers(
+      Array.isArray(localDRaw)
+        ? localDRaw.filter(x => x && x.name).map((x, i) => ({ id: x.id ?? String(i + 1), name: x.name! }))
+        : []
+    );
+  } else {
+    console.error(e);
+  }
+}
   };
 
   const onDriversChanged = () => reload();
