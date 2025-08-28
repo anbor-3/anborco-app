@@ -1,3 +1,4 @@
+// src/AdminFileManager.tsx —— 差し替え版（全文）
 import { useEffect, useState } from "react";
 import PO_PDF  from "@/assets/発注書テンプレート.pdf?url";
 import PS_PDF  from "@/assets/支払明細書テンプレート.pdf?url";
@@ -46,7 +47,6 @@ async function savePdfToStorageAndNeon(params: {
 }) {
   const { dataUrl, fileName, company, driverId, type } = params;
 
-  // 1) Firebase Storage へアップロード（base64 Data URL）
   const safeCompany  = String(company).replace(/[\/#?]/g, "_");
   const safeDriverId = String(driverId).replace(/[\/#?]/g, "_");
   const safeType     = String(type).replace(/[\/#?]/g, "_");
@@ -55,30 +55,21 @@ async function savePdfToStorageAndNeon(params: {
   const storagePath  = `pdfs/${safeCompany}/${safeDriverId}/${safeType}/${safeFileName}`;
   const sref         = ref(storage, storagePath);
   await uploadString(sref, dataUrl, "data_url", { contentType: "application/pdf" });
-
   const url = await getDownloadURL(sref);
 
-  // 2) Neon(Postgres) にメタ保存（認証必須）
   const idToken = await auth.currentUser?.getIdToken?.();
   if (!idToken) throw new Error("未ログインです");
 
-  await fetch("/api/pdfs/save", {
+  const r = await fetch("/api/pdfs/save", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${idToken}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      company,
-      driverId,
-      type,
-      fileName,
-      url,                         // ← DataURLではなく Storage の署名URL
+      company, driverId, type, fileName,
+      url, // ← Storage のURL
       createdAt: new Date().toISOString(),
     }),
-  }).then(r => {
-    if (!r.ok) throw new Error(`POST /api/pdfs/save -> ${r.status}`);
   });
+  if (!r.ok) throw new Error(`POST /api/pdfs/save -> ${r.status}`);
 }
 /* ▲▲ 追加ここまで ▲▲ */
 
@@ -99,7 +90,7 @@ interface PdfItem {
   driverName: string;
   date: string;
   fileName: string;
-  dataUrl: string; // サーバがURLで返す場合も、このフィールドにURL文字列でOK（UI変更なし）
+  dataUrl: string; // サーバがURLでもここに入れる
 }
 
 interface ZipItem {
@@ -109,20 +100,19 @@ interface ZipItem {
   dataUrl: string;
 }
 
-// ★ 各テンプレのデフォルト自動入力マッピング
+// ★ 既定のマッピング（日本語キー）
 const DEFAULT_MAPS: Record<TemplateType, Record<string, string>> = {
   "発注書": {
-    "{{発注No}}": "{{発注No}}",   // buildFinalMapping で連番を自動セット
-    "{{today}}": "{{today}}",     // 同じく日付自動セット
-    "{{担当者}}": "{{担当者}}",   // ログイン管理者名を自動セット
+    "{{発注No}}": "{{発注No}}",
+    "{{today}}": "{{today}}",
+    "{{担当者}}": "{{担当者}}",
     "{{ドライバー名}}": "name",
     "{{会社名}}": "company",
-    "{{電話}}": "phone",          // 無ければ削ってOK
-    "{{住所}}": "address",        // 無ければ削ってOK
+    "{{電話}}": "phone",
+    "{{住所}}": "address",
     "{{item_1_desc}}":  "実績_item1_desc",
     "{{item_1_qty}}":   "実績_item1_qty",
     "{{item_1_price}}": "実績_item1_price",
-    // amount / totalAmount は buildFinalMapping で自動計算
   },
   "支払明細書": {
     "{{today}}": "{{today}}",
@@ -137,7 +127,7 @@ const DEFAULT_MAPS: Record<TemplateType, Record<string, string>> = {
     "{{today}}": "{{today}}",
     "{{請求先}}": "company",
     "{{担当者}}": "{{担当者}}",
-    "{{請求番号}}": "{{発注No}}", // 連番を流用する例
+    "{{請求番号}}": "{{発注No}}",
     "{{請求対象名}}": "name",
     "{{小計}}": "実績_subtotal",
     "{{税額}}": "実績_tax",
@@ -145,20 +135,16 @@ const DEFAULT_MAPS: Record<TemplateType, Record<string, string>> = {
   },
 };
 
-// ✅ 日本語/英字どちらでも安全にマップを返すヘルパー
-type TemplateTypeJ = TemplateType;
-type TemplateTypeE = "PO" | "PS" | "INV";
-function getDefaultMap(t: TemplateTypeJ | TemplateTypeE): Record<string, string> {
+// ✅ 安全な取得関数（日本語/英字どちらでもOK）
+function getDefaultMapByType(t: TemplateType | "PO" | "PS" | "INV"): Record<string, string> {
   switch (t) {
-    case "PO":  return DEFAULT_MAPS["発注書"];
-    case "PS":  return DEFAULT_MAPS["支払明細書"];
-    case "INV": return DEFAULT_MAPS["請求書"];
     case "発注書":
+    case "PO":  return DEFAULT_MAPS["発注書"];
     case "支払明細書":
+    case "PS":  return DEFAULT_MAPS["支払明細書"];
     case "請求書":
-      return DEFAULT_MAPS[t];
-    default:
-      return {};
+    case "INV": return DEFAULT_MAPS["請求書"];
+    default:    return {};
   }
 }
 
@@ -168,22 +154,18 @@ export default function AdminFileManager() {
   const [pdfs, setPdfs] = useState<PdfItem[]>([]);
   const [zips, setZips] = useState<ZipItem[]>([]);
   const [sendModal, setSendModal] = useState<{
-    open: boolean;
-    fileName: string;
-    blob: Blob;
-    to: { uid: string; name: string };
+    open: boolean; fileName: string; blob: Blob; to: { uid: string; name: string };
   } | null>(null);
   const [currentTab, setCurrentTab] = useState<"PO" | "PS" | "INV">("PO");
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [tplType, setTplType] = useState<Template["type"]>("発注書");
-  const [tplFile, setTplFile] = useState<File | null>(null);
+  const [tplType , setTplType ]  = useState<Template["type"]>("発注書");
+  const [tplFile , setTplFile ]  = useState<File | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
 
-  // PDFプレビュー用 State
+  // PDFプレビュー
   const [pdfPreview, setPdfPreview] =
     useState<{ open: boolean; url: string; title: string } | null>(null);
 
-  // data:URL を Blob URL に変換（http/https の時はそのまま）
   function makeObjectUrlIfDataUrl(src: string): string {
     try {
       if (typeof src === "string" && src.startsWith("data:application/pdf")) {
@@ -191,15 +173,11 @@ export default function AdminFileManager() {
         return URL.createObjectURL(blob);
       }
       return src;
-    } catch {
-      return src;
-    }
+    } catch { return src; }
   }
 
   async function getBlobFromAnyUrl(src: string): Promise<Blob> {
-    if (typeof src === "string" && src.startsWith("data:")) {
-      return dataURLtoBlob(src);
-    }
+    if (typeof src === "string" && src.startsWith("data:")) return dataURLtoBlob(src);
     const res = await fetch(src);
     if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
     return await res.blob();
@@ -207,7 +185,6 @@ export default function AdminFileManager() {
 
   const handleUpload = () => {
     if (!tplFile) return;
-
     const company = localStorage.getItem("company") ?? "default";
     const reader = new FileReader();
 
@@ -220,27 +197,18 @@ export default function AdminFileManager() {
         }
         const name = tplFile.name.replace(/\.(pdf)$/i, "");
 
-        // ★ アップロード時にもデフォルトマッピングを付与（型安全）
-        const initialMap = getDefaultMap(tplType);
+        // ← ここを安全関数に一本化
+        const initialMap = getDefaultMapByType(tplType);
 
         try {
           const saved = await apiPost<Template>("/api/templates/upload", {
-            company,
-            type: tplType,
-            name,
-            dataUrl: result,
-            map: initialMap,
+            company, type: tplType, name, dataUrl: result, map: initialMap,
           });
           setTemplates((prev) => [saved, ...prev]);
         } catch {
-          // API失敗時はローカルへ保存
-          const newTpl = {
+          const newTpl: Template = {
             key: `tpl_${tplType}_${Date.now()}`,
-            name,
-            type: tplType,
-            date: todayStr(),
-            dataUrl: result,
-            map: initialMap,
+            name, type: tplType, date: todayStr(), dataUrl: result, map: initialMap,
           };
           localStorage.setItem(newTpl.key, JSON.stringify(newTpl));
           setTemplates((prev) => [newTpl, ...prev]);
@@ -262,10 +230,10 @@ export default function AdminFileManager() {
     if (!window.confirm("本当に削除しますか？")) return;
     try {
       await apiDelete(`/api/zips/${encodeURIComponent(key)}`);
-      setZips((prev) => prev.filter((z) => z.key !== key));
+      setZips(prev => prev.filter(z => z.key !== key));
     } catch {
       localStorage.removeItem(key);
-      setZips((prev) => prev.filter((z) => z.key !== key));
+      setZips(prev => prev.filter(z => z.key !== key));
     }
   };
 
@@ -274,9 +242,7 @@ export default function AdminFileManager() {
     const ymPrefix = new Date().toISOString().slice(0, 7);
 
     try {
-      const tpl = await apiGet<Template[]>(
-        `/api/templates?company=${encodeURIComponent(company)}`
-      );
+      const tpl = await apiGet<Template[]>(`/api/templates?company=${encodeURIComponent(company)}`);
       setTemplates(tpl);
     } catch {
       const tpl: Template[] = Object.entries(localStorage)
@@ -292,20 +258,15 @@ export default function AdminFileManager() {
       setPdfs(pdfArr);
     } catch {
       const pdfArr: PdfItem[] = Object.entries(localStorage)
-        .filter(
-          ([k]) =>
-            (k.startsWith("po_") ||
-              k.startsWith("ps_") ||
-              k.startsWith("inv_")) && k.includes(ymPrefix)
+        .filter(([k]) =>
+          (k.startsWith("po_") || k.startsWith("ps_") || k.startsWith("inv_")) && k.includes(ymPrefix)
         )
         .map(([k, v]) => ({ key: k, ...JSON.parse(v as string) }));
       setPdfs(pdfArr);
     }
 
     try {
-      const zipArr = await apiGet<ZipItem[]>(
-        `/api/zips?company=${encodeURIComponent(company)}`
-      );
+      const zipArr = await apiGet<ZipItem[]>(`/api/zips?company=${encodeURIComponent(company)}`);
       setZips(zipArr);
     } catch {
       const zipArr: ZipItem[] = Object.entries(localStorage)
@@ -318,20 +279,16 @@ export default function AdminFileManager() {
     }
   };
 
-  useEffect(() => {
-    reload();
-  }, []);
+  useEffect(() => { reload(); }, []);
 
-  // ▼ 初期テンプレ（内蔵PDF）を一度だけ投入：DEFAULT_MAPSを付与して保存
+  // 初期テンプレ（内蔵PDF）を一度だけ投入
   useEffect(() => {
     (async () => {
       const company = localStorage.getItem("company") ?? "default";
       const initializedKey = `defaultTemplatesInitialized_${company}`;
 
-      // すでに投入済みならスキップ
       if (localStorage.getItem(initializedKey)) return;
 
-      // サーバ側に既にテンプレがあるならスキップ
       try {
         const serverTemplates = await apiGet<Template[]>(
           `/api/templates?company=${encodeURIComponent(company)}`
@@ -341,12 +298,8 @@ export default function AdminFileManager() {
           return;
         }
       } catch {
-        // API失敗時はローカルの有無だけ確認
-        const existing = Object.keys(localStorage).some(
-          (k) =>
-            k.startsWith("tpl_発注書") ||
-            k.startsWith("tpl_支払明細書") ||
-            k.startsWith("tpl_請求書")
+        const existing = Object.keys(localStorage).some((k) =>
+          k.startsWith("tpl_発注書") || k.startsWith("tpl_支払明細書") || k.startsWith("tpl_請求書")
         );
         if (existing) {
           localStorage.setItem(initializedKey, "true");
@@ -354,7 +307,6 @@ export default function AdminFileManager() {
         }
       }
 
-      // 内蔵PDF（先頭の import 3行）から投入
       const defs = [
         { type: "発注書" as const,     name: "発注書テンプレート.pdf",     url: PO_PDF },
         { type: "支払明細書" as const, name: "支払明細書テンプレート.pdf", url: PS_PDF },
@@ -363,36 +315,26 @@ export default function AdminFileManager() {
 
       const created: Template[] = [];
       for (const { type, name, url } of defs) {
-        // URL→dataURL
         const blob = await fetch(url).then((r) => r.blob());
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onloadend = () => {
             const str = reader.result as string;
-            if (!str.startsWith("data:application/pdf;base64,")) {
-              reject(new Error("base64ではない"));
-            } else {
-              resolve(str);
-            }
+            if (!str.startsWith("data:application/pdf;base64,")) reject(new Error("base64ではない"));
+            else resolve(str);
           };
           reader.onerror = reject;
           reader.readAsDataURL(blob);
         });
 
-        // ★ デフォルトマッピング（型安全）
-        const map = getDefaultMap(type);
+        const map = getDefaultMapByType(type); // ← 安全関数
 
         try {
           const saved = await apiPost<Template>("/api/templates/upload", {
-            company,
-            type,      // ← ループの type
-            name,
-            dataUrl,   // ← 直前で作った dataUrl
-            map,
+            company, type, name, dataUrl, map,
           });
           created.push(saved);
         } catch {
-          // フォールバック：localStorage
           const key = `tpl_${type}_${Date.now()}`;
           const tpl: Template = { key, name, type, date: todayStr(), dataUrl, map };
           localStorage.setItem(key, JSON.stringify(tpl));
@@ -400,7 +342,6 @@ export default function AdminFileManager() {
         }
       }
 
-      // 画面に反映 & フラグセット
       setTemplates((prev) => [...created, ...prev]);
       localStorage.setItem(initializedKey, "true");
       console.log("✅ デフォルトテンプレを投入（DEFAULT_MAPS付き）");
@@ -467,7 +408,6 @@ export default function AdminFileManager() {
     return result;
   }
 
-  // テンプレ種別ごとに、空なら都度入力させたいキー
   const REQUIRED_KEYS: Record<TemplateType, string[]> = {
     "発注書": ["{{item_1_desc}}","{{item_1_qty}}","{{item_1_price}}"],
     "支払明細書": ["{{合計配達数}}","{{総稼働時間}}","{{走行距離}}","{{支払総額}}"],
@@ -483,8 +423,6 @@ export default function AdminFileManager() {
         if (v !== null) finalValues[k] = v;
       }
     }
-
-    // 金額の自動計算（発注書）
     if (type === "発注書") {
       let total = 0;
       for (let i = 1; i <= 5; i++) {
@@ -496,8 +434,6 @@ export default function AdminFileManager() {
       }
       finalValues["{{totalAmount}}"] = String(total);
     }
-
-    // 請求書の合計（未入力なら小計＋税）
     if (type === "請求書") {
       const sub = parseFloat(finalValues["{{小計}}"] ?? "0");
       const tax = parseFloat(finalValues["{{税額}}"] ?? "0");
@@ -508,12 +444,11 @@ export default function AdminFileManager() {
   }
 
   function applyDriverMapping(templateDataUrl: string, finalValues: Record<string, string>): string {
-    const base64Body = templateDataUrl.split(",")[1];
+    const base64Body = templateDataUrl.split(',')[1];
     let content = atob(base64Body);
     Object.entries(finalValues).forEach(([placeholder, value]) => {
-      try {
-        content = content.replaceAll(placeholder, String(value ?? ""));
-      } catch {
+      try { content = content.replaceAll(placeholder, String(value ?? "")); }
+      catch {
         const re = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
         content = content.replace(re, String(value ?? ""));
       }
@@ -522,45 +457,33 @@ export default function AdminFileManager() {
   }
 
   const [driverList, setDriverList] = useState<Driver[]>([]);
-
   useEffect(() => {
     (async () => {
       const company = localStorage.getItem("company") ?? "";
-      if (!company) {
-        console.warn("⚠️ company が localStorage にありません");
-        return;
-      }
+      if (!company) { console.warn("⚠️ company が localStorage にありません"); return; }
       try {
-        const list = await apiGet<Driver[]>(
-          `/api/drivers?company=${encodeURIComponent(company)}`
-        );
+        const list = await apiGet<Driver[]>(`/api/drivers?company=${encodeURIComponent(company)}`);
         setDriverList(list);
       } catch (e) {
         console.warn("drivers API 取得失敗。localStorageへフォールバック", e);
         const raw = localStorage.getItem(`driverList_${company}`);
         if (!raw) return;
-        try {
-          const list = JSON.parse(raw);
-          setDriverList(list);
-        } catch (err) {
-          console.error("❌ driverList のパースに失敗:", err);
-        }
+        try { setDriverList(JSON.parse(raw)); }
+        catch (err) { console.error("❌ driverList のパースに失敗:", err); }
       }
     })();
   }, []);
 
   // ------- マッピング編集モーダル用 -------
-  const [mapKey,       setMapKey]       = useState<string | null>(null);
+  const [mapKey,       setMapKey]       = useState<string|null>(null);
   const [placeholders, setPlaceholders] = useState<string[]>([]);
-  const [mapping,      setMapping]      = useState<Record<string, string>>({});
+  const [mapping,      setMapping]      = useState<Record<string,string>>({});
 
   async function openMappingModal(tpl: Template) {
     try {
       const { extractPlaceholders } = await import("@/utils/pdfUtils");
-      const ph = await extractPlaceholders(tpl.dataUrl); // URLでもdata:URLでもOK
-      if (!Array.isArray(ph) || ph.length === 0) {
-        throw new Error("プレースホルダーが見つかりません");
-      }
+      const ph = await extractPlaceholders(tpl.dataUrl);
+      if (!Array.isArray(ph) || ph.length === 0) throw new Error("プレースホルダーが見つかりません");
       setMapKey(tpl.key);
       setPlaceholders(ph);
       setMapping(tpl.map ?? {});
@@ -580,7 +503,7 @@ export default function AdminFileManager() {
         const meta = JSON.parse(metaRaw);
         localStorage.setItem(mapKey, JSON.stringify({ ...meta, map: mapping }));
       } else {
-        setTemplates((prev) => prev.map((t) => (t.key === mapKey ? { ...t, map: mapping } : t)));
+        setTemplates(prev => prev.map(t => (t.key === mapKey ? { ...t, map: mapping } : t)));
       }
     }
     setMapKey(null);
@@ -594,15 +517,14 @@ export default function AdminFileManager() {
         🖨️ファイル管理<span className="text-sm text-gray-500"> - FileManager -</span>
       </h1>
 
-      {/* ========== 📑 テンプレート管理 ========== */}
+      {/* ========== テンプレート管理 ========== */}
       <div className="mb-10 border p-4 rounded shadow">
         <h2 className="text-lg font-bold mb-3">📑 テンプレート管理</h2>
 
-        {/* 🔁 アップロード欄 */}
         <div className="flex items-center gap-2 mb-4">
           <select
             value={tplType}
-            onChange={(e) => setTplType(e.target.value as any)}
+            onChange={e => setTplType(e.target.value as any)}
             className="border px-2 py-1 rounded"
           >
             <option value="発注書">発注書 (PO)</option>
@@ -613,7 +535,7 @@ export default function AdminFileManager() {
           <input
             type="file"
             accept="application/pdf"
-            onChange={(e) => setTplFile(e.target.files?.[0] ?? null)}
+            onChange={e => setTplFile(e.target.files?.[0] ?? null)}
           />
 
           <button
@@ -625,69 +547,49 @@ export default function AdminFileManager() {
           </button>
         </div>
 
-        {/* 📌 帳票作成セクション */}
         <div className="flex items-center gap-4 mb-4">
           <label className="text-sm text-gray-600">📌 帳票作成対象のドライバー：</label>
           <select
             className="border px-2 py-1 rounded"
             value={selectedDriver?.uid ?? ""}
-            onChange={(e) => {
-              const selected = driverList.find((d) => d.uid === e.target.value);
+            onChange={e => {
+              const selected = driverList.find(d => d.uid === e.target.value);
               setSelectedDriver(selected ?? null);
             }}
           >
             <option value="">-- 選択してください --</option>
-            {driverList.map((d) => (
+            {driverList.map(d => (
               <option key={d.uid} value={d.uid}>
                 {d.name}（{d.contractType}）
               </option>
             ))}
           </select>
 
-          {/* 種別選択 */}
           <select
             className="border px-2 py-1 rounded"
             value={currentTab}
-            onChange={(e) => setCurrentTab(e.target.value as any)}
+            onChange={e => setCurrentTab(e.target.value as any)}
           >
             <option value="PO">発注書</option>
             <option value="PS">支払明細書</option>
             <option value="INV">請求書</option>
           </select>
 
-          {/* 作成ボタン（保存処理のみ変更、UIは同じ） */}
           <button
             className="bg-indigo-600 text-white px-4 py-1 rounded"
             onClick={async () => {
-              if (!selectedDriver) {
-                alert("ドライバーを選択してください");
-                return;
-              }
+              if (!selectedDriver) { alert("ドライバーを選択してください"); return; }
 
-              const target = templates.find(
-                (t) =>
-                  t.type ===
-                  (currentTab === "PO"
-                    ? "発注書"
-                    : currentTab === "PS"
-                    ? "支払明細書"
-                    : "請求書")
-              );
-              if (!target) {
-                alert("該当テンプレートが見つかりません");
-                return;
-              }
+              const target = templates.find(t => t.type === (
+                currentTab === "PO" ? "発注書" :
+                currentTab === "PS" ? "支払明細書" : "請求書"
+              ));
+              if (!target) { alert("該当テンプレートが見つかりません"); return; }
 
-              // ❶ マッピング最終値
               const finalValues = await buildFinalMapping(target.map ?? {}, selectedDriver);
-
-              // ✅ 不足値があれば都度入力
               await ensureRequiredInputs(target.type, finalValues);
-
-              // ❷ PDF生成（クライアント）
               const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
 
-              // ❸ 保存（Storage + Neon）／失敗時はLS
               const fileName = `${todayStr()}_${selectedDriver.name}_${target.type}.pdf`;
               const keyPrefix = currentTab === "PO" ? "po_" : currentTab === "PS" ? "ps_" : "inv_";
 
@@ -700,20 +602,14 @@ export default function AdminFileManager() {
                   type: target.type,
                 });
               } catch (e) {
-                console.error(
-                  "Storage/Neon 保存に失敗。localStorage にフォールバックします。",
-                  e
-                );
+                console.error("Storage/Neon 保存に失敗。localStorage にフォールバックします。", e);
                 const key = `${keyPrefix}${Date.now()}`;
-                localStorage.setItem(
-                  key,
-                  JSON.stringify({
-                    driverName: selectedDriver.name,
-                    date: todayStr(),
-                    fileName,
-                    dataUrl: filledDataUrl,
-                  })
-                );
+                localStorage.setItem(key, JSON.stringify({
+                  driverName: selectedDriver.name,
+                  date: todayStr(),
+                  fileName,
+                  dataUrl: filledDataUrl,
+                }));
               }
 
               alert("PDFを作成しました");
@@ -735,7 +631,7 @@ export default function AdminFileManager() {
             </tr>
           </thead>
           <tbody>
-            {templates.map((tpl) => (
+            {templates.map(tpl => (
               <tr key={tpl.key}>
                 <td className="border px-2 py-1">{tpl.type}</td>
                 <td className="border px-2 py-1">{tpl.name}</td>
@@ -767,7 +663,7 @@ export default function AdminFileManager() {
                       } catch {
                         localStorage.removeItem(tpl.key);
                       }
-                      setTemplates((t) => t.filter((tp) => tp.key !== tpl.key));
+                      setTemplates(t => t.filter(tp => tp.key !== tpl.key));
                     }}
                   >
                     削除
@@ -776,18 +672,10 @@ export default function AdminFileManager() {
               </tr>
             ))}
             {templates.length === 0 && (
-              <tr>
-                <td colSpan={4} className="text-center py-3">
-                  まだ何もありません
-                </td>
-              </tr>
+              <tr><td colSpan={4} className="text-center py-3">まだ何もありません</td></tr>
             )}
-            {Object.keys(localStorage).filter((k) => k.startsWith("tpl_")).length === 0 && (
-              <tr>
-                <td colSpan={4} className="text-center py-3">
-                  まだ何もありません
-                </td>
-              </tr>
+            {Object.keys(localStorage).filter(k => k.startsWith("tpl_")).length === 0 && (
+              <tr><td colSpan={4} className="text-center py-3">まだ何もありません</td></tr>
             )}
           </tbody>
         </table>
@@ -805,7 +693,7 @@ export default function AdminFileManager() {
           </tr>
         </thead>
         <tbody>
-          {pdfs.map((p) => (
+          {pdfs.map(p => (
             <tr key={p.key}>
               <td className="border px-4 py-2">{p.date}</td>
               <td className="border px-4 py-2">{p.driverName}</td>
@@ -828,11 +716,7 @@ export default function AdminFileManager() {
             </tr>
           ))}
           {pdfs.length === 0 && (
-            <tr>
-              <td colSpan={4} className="text-center py-4">
-                当月の提出はまだありません。
-              </td>
-            </tr>
+            <tr><td colSpan={4} className="text-center py-4">当月の提出はまだありません。</td></tr>
           )}
         </tbody>
       </table>
@@ -850,7 +734,7 @@ export default function AdminFileManager() {
           </tr>
         </thead>
         <tbody>
-          {zips.map((z) => (
+          {zips.map(z => (
             <tr key={z.key}>
               <td className="border px-4 py-2">{z.ym}</td>
               <td className="border px-4 py-2">{z.driverName}</td>
@@ -892,11 +776,7 @@ export default function AdminFileManager() {
             </tr>
           ))}
           {zips.length === 0 && (
-            <tr>
-              <td colSpan={4} className="text-center py-4">
-                過去 ZIP はありません。
-              </td>
-            </tr>
+            <tr><td colSpan={4} className="text-center py-4">過去 ZIP はありません。</td></tr>
           )}
         </tbody>
       </table>
@@ -931,9 +811,7 @@ export default function AdminFileManager() {
                 <button
                   className="px-3 py-1 border rounded"
                   onClick={() => {
-                    try {
-                      if (pdfPreview.url.startsWith("blob:")) URL.revokeObjectURL(pdfPreview.url);
-                    } catch {}
+                    try { if (pdfPreview.url.startsWith("blob:")) URL.revokeObjectURL(pdfPreview.url); } catch {}
                     setPdfPreview(null);
                   }}
                 >
