@@ -7,3 +7,5 @@ dist/
 serviceAccount.json
 serviceAccount.json
 anborco-app-firebase-adminsdk-*.json
+
+.vercel

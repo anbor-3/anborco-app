@@ -1,5 +1,5 @@
 // src/utils/pdfUtils.ts
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { PDFDocument } from "pdf-lib";
 
 /* --------------------------------------------------
    共通ユーティリティ
@@ -12,16 +12,32 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 export function loadLatestTemplate(
   type: "PO" | "PS" | "INV"
 ): ArrayBuffer | null {
+  // 英語・日本語どちらの保存キーでも拾う
+  const prefixes =
+    type === "PO"
+      ? ["tpl_PO_", "tpl_発注書_"]
+      : type === "PS"
+      ? ["tpl_PS_", "tpl_支払明細書_"]
+      : ["tpl_INV_", "tpl_請求書_"];
+
   const keys = Object.keys(localStorage)
-    .filter((k) => k.startsWith(`tpl_${type}_`))
+    .filter((k) => prefixes.some((p) => k.startsWith(p)))
     .sort(); // 時間順に並ぶ
 
   if (keys.length === 0) return null;
 
-  const meta = JSON.parse(localStorage.getItem(keys.at(-1)!)!); // 最新
-  const byteString = atob(meta.dataUrl.split(",")[1]);
-  const buf = new Uint8Array(byteString.length);
-  for (let i = 0; i < byteString.length; i++) buf[i] = byteString.charCodeAt(i);
+  const raw = localStorage.getItem(keys.at(-1)!);
+  if (!raw) return null;
+
+  const meta = JSON.parse(raw);
+  const dataUrl: string = meta.dataUrl ?? "";
+  // data:URL形式なら先頭を剥がす
+  const base64 = dataUrl.startsWith("data:") ? dataUrl.split(",")[1] : dataUrl;
+  if (!base64) return null;
+
+  const bin = atob(base64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
   return buf.buffer;
 }
 
@@ -120,24 +136,40 @@ export async function createSinglePDF(
        – AcroForm が無くても、単純に {{name}} という
          文字列を検索して返すだけの簡易版
 -------------------------------------------------- */
-export async function extractPlaceholders(dataUrl: string): Promise<string[]> {
-  // DataURL → ArrayBuffer
-  const byteString = atob(dataUrl.split(',')[1]);
-  const uint8      = new Uint8Array(byteString.length);
-  for (let i = 0; i < byteString.length; i++) uint8[i] = byteString.charCodeAt(i);
+// ▼ 追加：URLでもdata:URLでも扱えるように
+async function toDataUrlIfNeeded(src: string): Promise<string> {
+  if (src.startsWith("data:application/pdf;base64,")) return src;
+  const res = await fetch(src);
+  if (!res.ok) throw new Error(`fetch pdf failed: ${res.status}`);
+  const blob = await res.blob();
+  return await new Promise<string>((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onloadend = () => resolve(fr.result as string);
+    fr.onerror = reject;
+    fr.readAsDataURL(blob);
+  });
+}
 
-  // pdf-lib でテキスト抽出
-  const pdf = await PDFDocument.load(uint8.buffer);
-  const pages = await Promise.all(
-    pdf.getPages().map(async p => (await p.getTextContent()).items.map(i => (i as any).str).join(' '))
-  );
-  const text = pages.join(' ');
+// src/utils/pdfUtils.ts（差し替え）
+export async function extractPlaceholders(src: string): Promise<string[]> {
+  // 1) 必要なら data:URL 化
+  const dataUrl = await toDataUrlIfNeeded(src);
 
-  // {{placeholder}} を全部拾う
-  const set = new Set<string>();
-  const re  = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
+  // 2) base64 → バイナリ文字列
+  const base64 = dataUrl.split(",")[1];
+  const bin = atob(base64);
+
+  // 3) 見えるASCIIだけ抽出
+  let ascii = "";
+  for (let i = 0; i < bin.length; i++) {
+    const c = bin.charCodeAt(i);
+    ascii += c >= 32 && c <= 126 ? bin[i] : " ";
+  }
+
+  // 4) {{placeholder}} を収集（スペースは潰す）
+  const out = new Set<string>();
+  const re = /{{\s*[a-zA-Z0-9_]+\s*}}/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) set.add(m[1]);
-
-  return [...set];
+  while ((m = re.exec(ascii))) out.add(m[0].replace(/\s+/g, ""));
+  return [...out];
 }

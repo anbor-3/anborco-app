@@ -1,38 +1,47 @@
-import { NextRequest, NextResponse } from "next/server";
-import { sql } from "@/lib/db";
-import { requireUser } from "@/lib/requireAuth";
+import { NextResponse } from "next/server";
+import { sql } from "@/lib/neon";
+import { verifyBearer, requireSameCompanyOrAdmin } from "@/lib/authServer";
 
-export async function GET(req: NextRequest) {
-  await requireUser(req);
-  const { searchParams } = new URL(req.url);
-  const company = searchParams.get("company") || "";
-  const ym = searchParams.get("ym"); // 'YYYY-MM'
+export const runtime = "nodejs";
 
-  if (!company) return NextResponse.json([], { status: 200 });
+export async function GET(req: Request) {
+  try {
+    const u = await verifyBearer(req);
+    const { searchParams } = new URL(req.url);
+    const company = searchParams.get("company") || "";
+    const ym = searchParams.get("ym") || ""; // "YYYY-MM"
+    if (!company || !ym) {
+      return NextResponse.json({ error: "missing query" }, { status: 400 });
+    }
 
-  const rows = await sql<{
-    id: number;
-    file_name: string;
-    url: string;
-    created_at: string;
-    driver_name: string | null;
-  }[]>`
-    SELECT p.id, p.file_name, p.url, p.created_at,
-           COALESCE(d.name, au.name, '') AS driver_name
-      FROM pdfs p
- LEFT JOIN drivers d   ON d.id::text = p.driver_id
- LEFT JOIN app_users au ON au.firebase_uid = p.driver_id
-     WHERE p.company = ${company}
-       ${ym ? sql`AND to_char(p.created_at,'YYYY-MM') = ${ym}` : sql``}
-  ORDER BY p.created_at DESC`;
+    await requireSameCompanyOrAdmin(u, company);
 
-  const payload = rows.map(r => ({
-    key: String(r.id),
-    driverName: r.driver_name || "",
-    date: r.created_at.substring(0, 10),
-    fileName: r.file_name,
-    dataUrl: r.url, // front expects the field name `dataUrl`
-  }));
+    const rows = await sql<{
+      id: number;
+      created_at: string;
+      file_name: string;
+      url: string;
+      driver_id: string;
+    }[]>`
+      SELECT id, created_at, file_name, url, driver_id
+      FROM pdfs
+      WHERE company = ${company}
+        AND to_char(created_at, 'YYYY-MM') = ${ym}
+      ORDER BY created_at DESC
+      LIMIT 500;
+    `;
 
-  return NextResponse.json(payload);
+    // フロントの期待shapeに寄せる（driverName は暫定で driver_id）
+    const list = rows.map(r => ({
+      key: String(r.id),
+      driverName: r.driver_id,
+      date: new Date(r.created_at).toISOString().slice(0, 10),
+      fileName: r.file_name,
+      dataUrl: r.url,
+    }));
+
+    return NextResponse.json(list);
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message ?? "bad request" }, { status: 400 });
+  }
 }

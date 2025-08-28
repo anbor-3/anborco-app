@@ -1,4 +1,4 @@
-import  {useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import PO_PDF  from "@/assets/発注書テンプレート.pdf?url";
 import PS_PDF  from "@/assets/支払明細書テンプレート.pdf?url";
 import INV_PDF from "@/assets/請求書テンプレート.pdf?url";
@@ -47,11 +47,15 @@ async function savePdfToStorageAndNeon(params: {
   const { dataUrl, fileName, company, driverId, type } = params;
 
   // 1) Firebase Storage へアップロード（base64 Data URL）
-  const storagePath = `pdfs/${encodeURIComponent(company)}/${encodeURIComponent(
-    driverId
-  )}/${encodeURIComponent(type)}/${fileName}`;
-  const sref = ref(storage, storagePath);
-  await uploadString(sref, dataUrl, "data_url");
+  const safeCompany  = String(company).replace(/[\/#?]/g, "_");
+  const safeDriverId = String(driverId).replace(/[\/#?]/g, "_");
+  const safeType     = String(type).replace(/[\/#?]/g, "_");
+  const safeFileName = String(fileName).replace(/[\/#?]/g, "_");
+
+  const storagePath  = `pdfs/${safeCompany}/${safeDriverId}/${safeType}/${safeFileName}`;
+  const sref         = ref(storage, storagePath);
+  await uploadString(sref, dataUrl, "data_url", { contentType: "application/pdf" });
+
   const url = await getDownloadURL(sref);
 
   // 2) Neon(Postgres) にメタ保存（認証必須）
@@ -95,7 +99,7 @@ interface PdfItem {
   driverName: string;
   date: string;
   fileName: string;
-  dataUrl: string; //※ サーバがURLを返す場合も、このフィールドにURL文字列を入れてOK（UI変更なし）
+  dataUrl: string; // サーバがURLで返す場合も、このフィールドにURL文字列でOK（UI変更なし）
 }
 
 interface ZipItem {
@@ -105,7 +109,7 @@ interface ZipItem {
   dataUrl: string;
 }
 
-// ★追記：各テンプレのデフォルト自動入力マッピング
+// ★ 各テンプレのデフォルト自動入力マッピング
 const DEFAULT_MAPS: Record<TemplateType, Record<string, string>> = {
   "発注書": {
     "{{発注No}}": "{{発注No}}",   // buildFinalMapping で連番を自動セット
@@ -118,9 +122,8 @@ const DEFAULT_MAPS: Record<TemplateType, Record<string, string>> = {
     "{{item_1_desc}}":  "実績_item1_desc",
     "{{item_1_qty}}":   "実績_item1_qty",
     "{{item_1_price}}": "実績_item1_price",
-    // amount と totalAmount は buildFinalMapping で自動計算されます
+    // amount / totalAmount は buildFinalMapping で自動計算
   },
-
   "支払明細書": {
     "{{today}}": "{{today}}",
     "{{ドライバー名}}": "name",
@@ -130,7 +133,6 @@ const DEFAULT_MAPS: Record<TemplateType, Record<string, string>> = {
     "{{走行距離}}": "実績_totalDistance",
     "{{支払総額}}": "実績_totalPay",
   },
-
   "請求書": {
     "{{today}}": "{{today}}",
     "{{請求先}}": "company",
@@ -143,6 +145,23 @@ const DEFAULT_MAPS: Record<TemplateType, Record<string, string>> = {
   },
 };
 
+// ✅ 日本語/英字どちらでも安全にマップを返すヘルパー
+type TemplateTypeJ = TemplateType;
+type TemplateTypeE = "PO" | "PS" | "INV";
+function getDefaultMap(t: TemplateTypeJ | TemplateTypeE): Record<string, string> {
+  switch (t) {
+    case "PO":  return DEFAULT_MAPS["発注書"];
+    case "PS":  return DEFAULT_MAPS["支払明細書"];
+    case "INV": return DEFAULT_MAPS["請求書"];
+    case "発注書":
+    case "支払明細書":
+    case "請求書":
+      return DEFAULT_MAPS[t];
+    default:
+      return {};
+  }
+}
+
 const todayStr = () => new Date().toISOString().split("T")[0];
 
 export default function AdminFileManager() {
@@ -154,36 +173,37 @@ export default function AdminFileManager() {
     blob: Blob;
     to: { uid: string; name: string };
   } | null>(null);
-  const [currentTab, setCurrentTab] = useState<'PO' | 'PS' | 'INV'>('PO');
+  const [currentTab, setCurrentTab] = useState<"PO" | "PS" | "INV">("PO");
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [tplType , setTplType ]  = useState<Template["type"]>("発注書");
-  const [tplFile , setTplFile ]  = useState<File | null>(null);
+  const [tplType, setTplType] = useState<Template["type"]>("発注書");
+  const [tplFile, setTplFile] = useState<File | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
 
   // PDFプレビュー用 State
-const [pdfPreview, setPdfPreview] = useState<{ open: boolean; url: string; title: string } | null>(null);
+  const [pdfPreview, setPdfPreview] =
+    useState<{ open: boolean; url: string; title: string } | null>(null);
 
-// data:URL を Blob URL に変換（http/https の時はそのまま）
-function makeObjectUrlIfDataUrl(src: string): string {
-  try {
-    if (typeof src === "string" && src.startsWith("data:application/pdf")) {
-      const blob = dataURLtoBlob(src);
-      return URL.createObjectURL(blob);
+  // data:URL を Blob URL に変換（http/https の時はそのまま）
+  function makeObjectUrlIfDataUrl(src: string): string {
+    try {
+      if (typeof src === "string" && src.startsWith("data:application/pdf")) {
+        const blob = dataURLtoBlob(src);
+        return URL.createObjectURL(blob);
+      }
+      return src;
+    } catch {
+      return src;
     }
-    return src;
-  } catch {
-    return src;
   }
-}
 
-async function getBlobFromAnyUrl(src: string): Promise<Blob> {
-  if (typeof src === "string" && src.startsWith("data:")) {
-    return dataURLtoBlob(src);
+  async function getBlobFromAnyUrl(src: string): Promise<Blob> {
+    if (typeof src === "string" && src.startsWith("data:")) {
+      return dataURLtoBlob(src);
+    }
+    const res = await fetch(src);
+    if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
+    return await res.blob();
   }
-  const res = await fetch(src);
-  if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
-  return await res.blob();
-}
 
   const handleUpload = () => {
     if (!tplFile) return;
@@ -191,62 +211,61 @@ async function getBlobFromAnyUrl(src: string): Promise<Blob> {
     const company = localStorage.getItem("company") ?? "default";
     const reader = new FileReader();
 
-    // --- 省略 ---
-reader.onload = async () => {
-  try {
-    const result = reader.result as string;
-    if (!result.startsWith("data:application/pdf;base64,")) {
-      alert("無効なPDFファイルです（base64形式でない）");
-      return;
-    }
-    const name = tplFile.name.replace(/\.(pdf)$/i, "");
+    reader.onload = async () => {
+      try {
+        const result = reader.result as string;
+        if (!result.startsWith("data:application/pdf;base64,")) {
+          alert("無効なPDFファイルです（base64形式でない）");
+          return;
+        }
+        const name = tplFile.name.replace(/\.(pdf)$/i, "");
 
-    try {
-      // ★ アップロード時にもデフォルトマッピングを付与
-      const initialMap = DEFAULT_MAPS[tplType] ?? {};
-      const saved = await apiPost<Template>("/api/templates/upload", {
-        company,
-        type: tplType,
-        name,
-        dataUrl: result,
-        map: initialMap,
-      });
-      setTemplates((prev) => [saved, ...prev]);
-    } catch {
-      // API失敗時はローカルへ保存（同じくデフォルトマップを付与）
-      const initialMap = DEFAULT_MAPS[tplType] ?? {};
-      const newTpl = {
-        key: `tpl_${tplType}_${Date.now()}`,
-        name,
-        type: tplType,
-        date: todayStr(),
-        dataUrl: result,
-        map: initialMap,
-      };
-      localStorage.setItem(newTpl.key, JSON.stringify(newTpl));
-      setTemplates((prev) => [newTpl, ...prev]);
-    }
+        // ★ アップロード時にもデフォルトマッピングを付与（型安全）
+        const initialMap = getDefaultMap(tplType);
 
-    setTplFile(null);
-    alert("テンプレートを保存しました。");
-    reload();
-  } catch (e) {
-    console.error(e);
-    alert("アップロードに失敗しました");
-  }
-};
+        try {
+          const saved = await apiPost<Template>("/api/templates/upload", {
+            company,
+            type: tplType,
+            name,
+            dataUrl: result,
+            map: initialMap,
+          });
+          setTemplates((prev) => [saved, ...prev]);
+        } catch {
+          // API失敗時はローカルへ保存
+          const newTpl = {
+            key: `tpl_${tplType}_${Date.now()}`,
+            name,
+            type: tplType,
+            date: todayStr(),
+            dataUrl: result,
+            map: initialMap,
+          };
+          localStorage.setItem(newTpl.key, JSON.stringify(newTpl));
+          setTemplates((prev) => [newTpl, ...prev]);
+        }
+
+        setTplFile(null);
+        alert("テンプレートを保存しました。");
+        reload();
+      } catch (e) {
+        console.error(e);
+        alert("アップロードに失敗しました");
+      }
+    };
 
     reader.readAsDataURL(tplFile);
   };
-   
+
   const handleZipDelete = async (key: string) => {
     if (!window.confirm("本当に削除しますか？")) return;
     try {
       await apiDelete(`/api/zips/${encodeURIComponent(key)}`);
-      setZips(prev => prev.filter(z => z.key !== key));
+      setZips((prev) => prev.filter((z) => z.key !== key));
     } catch {
       localStorage.removeItem(key);
-      setZips(prev => prev.filter(z => z.key !== key));
+      setZips((prev) => prev.filter((z) => z.key !== key));
     }
   };
 
@@ -255,7 +274,9 @@ reader.onload = async () => {
     const ymPrefix = new Date().toISOString().slice(0, 7);
 
     try {
-      const tpl = await apiGet<Template[]>(`/api/templates?company=${encodeURIComponent(company)}`);
+      const tpl = await apiGet<Template[]>(
+        `/api/templates?company=${encodeURIComponent(company)}`
+      );
       setTemplates(tpl);
     } catch {
       const tpl: Template[] = Object.entries(localStorage)
@@ -271,15 +292,20 @@ reader.onload = async () => {
       setPdfs(pdfArr);
     } catch {
       const pdfArr: PdfItem[] = Object.entries(localStorage)
-        .filter(([k]) =>
-          (k.startsWith("po_") || k.startsWith("ps_") || k.startsWith("inv_")) && k.includes(ymPrefix)
+        .filter(
+          ([k]) =>
+            (k.startsWith("po_") ||
+              k.startsWith("ps_") ||
+              k.startsWith("inv_")) && k.includes(ymPrefix)
         )
         .map(([k, v]) => ({ key: k, ...JSON.parse(v as string) }));
       setPdfs(pdfArr);
     }
 
     try {
-      const zipArr = await apiGet<ZipItem[]>(`/api/zips?company=${encodeURIComponent(company)}`);
+      const zipArr = await apiGet<ZipItem[]>(
+        `/api/zips?company=${encodeURIComponent(company)}`
+      );
       setZips(zipArr);
     } catch {
       const zipArr: ZipItem[] = Object.entries(localStorage)
@@ -292,87 +318,94 @@ reader.onload = async () => {
     }
   };
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => {
+    reload();
+  }, []);
 
   // ▼ 初期テンプレ（内蔵PDF）を一度だけ投入：DEFAULT_MAPSを付与して保存
-// ▼ 初期テンプレ（内蔵PDF）を一度だけ投入：DEFAULT_MAPSを付与して保存
-useEffect(() => {
-  (async () => {
-    const company = localStorage.getItem("company") ?? "default";
-    const initializedKey = `defaultTemplatesInitialized_${company}`;
+  useEffect(() => {
+    (async () => {
+      const company = localStorage.getItem("company") ?? "default";
+      const initializedKey = `defaultTemplatesInitialized_${company}`;
 
-    // すでに投入済みならスキップ
-    if (localStorage.getItem(initializedKey)) return;
+      // すでに投入済みならスキップ
+      if (localStorage.getItem(initializedKey)) return;
 
-    // サーバ側に既にテンプレがあるならスキップ
-    try {
-      const serverTemplates = await apiGet<Template[]>(
-        `/api/templates?company=${encodeURIComponent(company)}`
-      );
-      if (serverTemplates?.length) {
-        localStorage.setItem(initializedKey, "true");
-        return;
-      }
-    } catch {
-      // API失敗時はローカルの有無だけ確認
-      const existing = Object.keys(localStorage).some((k) =>
-        k.startsWith("tpl_発注書") || k.startsWith("tpl_支払明細書") || k.startsWith("tpl_請求書")
-      );
-      if (existing) {
-        localStorage.setItem(initializedKey, "true");
-        return;
-      }
-    }
-
-    // 内蔵PDF（先頭の import 3行）から投入
-    const defs = [
-      { type: "発注書" as const,     name: "発注書テンプレート.pdf",     url: PO_PDF },
-      { type: "支払明細書" as const, name: "支払明細書テンプレート.pdf", url: PS_PDF },
-      { type: "請求書" as const,     name: "請求書テンプレート.pdf",     url: INV_PDF },
-    ];
-
-    const created: Template[] = [];
-    for (const { type, name, url } of defs) {
-      // URL→dataURL
-      const blob = await fetch(url).then((r) => r.blob());
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const str = reader.result as string;
-          if (!str.startsWith("data:application/pdf;base64,")) reject(new Error("base64ではない"));
-          else resolve(str);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-
-      // ★ デフォルトマッピングを付与
-      const map = DEFAULT_MAPS[type] ?? {};
-
+      // サーバ側に既にテンプレがあるならスキップ
       try {
-        const saved = await apiPost<Template>("/api/templates/upload", {
-          company,
-          type,      // ← ループの type
-          name,
-          dataUrl,   // ← 直前で作った dataUrl
-          map,
-        });
-        created.push(saved);
+        const serverTemplates = await apiGet<Template[]>(
+          `/api/templates?company=${encodeURIComponent(company)}`
+        );
+        if (serverTemplates?.length) {
+          localStorage.setItem(initializedKey, "true");
+          return;
+        }
       } catch {
-        // フォールバック：localStorage
-        const key = `tpl_${type}_${Date.now()}`;
-        const tpl: Template = { key, name, type, date: todayStr(), dataUrl, map };
-        localStorage.setItem(key, JSON.stringify(tpl));
-        created.push(tpl);
+        // API失敗時はローカルの有無だけ確認
+        const existing = Object.keys(localStorage).some(
+          (k) =>
+            k.startsWith("tpl_発注書") ||
+            k.startsWith("tpl_支払明細書") ||
+            k.startsWith("tpl_請求書")
+        );
+        if (existing) {
+          localStorage.setItem(initializedKey, "true");
+          return;
+        }
       }
-    }
 
-    // 画面に反映 & フラグセット
-    setTemplates((prev) => [...created, ...prev]);
-    localStorage.setItem(initializedKey, "true");
-    console.log("✅ デフォルトテンプレを投入（DEFAULT_MAPS付き）");
-  })();
-}, []);
+      // 内蔵PDF（先頭の import 3行）から投入
+      const defs = [
+        { type: "発注書" as const,     name: "発注書テンプレート.pdf",     url: PO_PDF },
+        { type: "支払明細書" as const, name: "支払明細書テンプレート.pdf", url: PS_PDF },
+        { type: "請求書" as const,     name: "請求書テンプレート.pdf",     url: INV_PDF },
+      ];
+
+      const created: Template[] = [];
+      for (const { type, name, url } of defs) {
+        // URL→dataURL
+        const blob = await fetch(url).then((r) => r.blob());
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const str = reader.result as string;
+            if (!str.startsWith("data:application/pdf;base64,")) {
+              reject(new Error("base64ではない"));
+            } else {
+              resolve(str);
+            }
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+
+        // ★ デフォルトマッピング（型安全）
+        const map = getDefaultMap(type);
+
+        try {
+          const saved = await apiPost<Template>("/api/templates/upload", {
+            company,
+            type,      // ← ループの type
+            name,
+            dataUrl,   // ← 直前で作った dataUrl
+            map,
+          });
+          created.push(saved);
+        } catch {
+          // フォールバック：localStorage
+          const key = `tpl_${type}_${Date.now()}`;
+          const tpl: Template = { key, name, type, date: todayStr(), dataUrl, map };
+          localStorage.setItem(key, JSON.stringify(tpl));
+          created.push(tpl);
+        }
+      }
+
+      // 画面に反映 & フラグセット
+      setTemplates((prev) => [...created, ...prev]);
+      localStorage.setItem(initializedKey, "true");
+      console.log("✅ デフォルトテンプレを投入（DEFAULT_MAPS付き）");
+    })();
+  }, []);
 
   function getDriverAchievements(uid: string, date: string): Record<string, string> {
     const key = `achievement_${uid}_${date}`;
@@ -435,47 +468,47 @@ useEffect(() => {
   }
 
   // テンプレ種別ごとに、空なら都度入力させたいキー
-const REQUIRED_KEYS: Record<TemplateType, string[]> = {
-  "発注書": ["{{item_1_desc}}","{{item_1_qty}}","{{item_1_price}}"],
-  "支払明細書": ["{{合計配達数}}","{{総稼働時間}}","{{走行距離}}","{{支払総額}}"],
-  "請求書": ["{{小計}}","{{税額}}","{{合計}}"],
-};
+  const REQUIRED_KEYS: Record<TemplateType, string[]> = {
+    "発注書": ["{{item_1_desc}}","{{item_1_qty}}","{{item_1_price}}"],
+    "支払明細書": ["{{合計配達数}}","{{総稼働時間}}","{{走行距離}}","{{支払総額}}"],
+    "請求書": ["{{小計}}","{{税額}}","{{合計}}"],
+  };
 
-async function ensureRequiredInputs(type: TemplateType, finalValues: Record<string, string>) {
-  const keys = REQUIRED_KEYS[type] || [];
-  for (const k of keys) {
-    if (!finalValues[k] || String(finalValues[k]).trim() === "") {
-      const label = k.replace(/[{}]/g, "");
-      const v = window.prompt(`「${label}」の値を入力してください`, "");
-      if (v !== null) finalValues[k] = v;
+  async function ensureRequiredInputs(type: TemplateType, finalValues: Record<string, string>) {
+    const keys = REQUIRED_KEYS[type] || [];
+    for (const k of keys) {
+      if (!finalValues[k] || String(finalValues[k]).trim() === "") {
+        const label = k.replace(/[{}]/g, "");
+        const v = window.prompt(`「${label}」の値を入力してください`, "");
+        if (v !== null) finalValues[k] = v;
+      }
+    }
+
+    // 金額の自動計算（発注書）
+    if (type === "発注書") {
+      let total = 0;
+      for (let i = 1; i <= 5; i++) {
+        const qty = parseFloat(finalValues[`{{item_${i}_qty}}`] ?? "0");
+        const price = parseFloat(finalValues[`{{item_${i}_price}}`] ?? "0");
+        const amount = qty * price;
+        finalValues[`{{item_${i}_amount}}`] = String(amount);
+        total += amount;
+      }
+      finalValues["{{totalAmount}}"] = String(total);
+    }
+
+    // 請求書の合計（未入力なら小計＋税）
+    if (type === "請求書") {
+      const sub = parseFloat(finalValues["{{小計}}"] ?? "0");
+      const tax = parseFloat(finalValues["{{税額}}"] ?? "0");
+      if (!finalValues["{{合計}}"] || finalValues["{{合計}}"] === "0") {
+        finalValues["{{合計}}"] = String(sub + tax);
+      }
     }
   }
-
-  // 金額の自動計算（発注書）
-  if (type === "発注書") {
-    let total = 0;
-    for (let i = 1; i <= 5; i++) {
-      const qty = parseFloat(finalValues[`{{item_${i}_qty}}`] ?? "0");
-      const price = parseFloat(finalValues[`{{item_${i}_price}}`] ?? "0");
-      const amount = qty * price;
-      finalValues[`{{item_${i}_amount}}`] = String(amount);
-      total += amount;
-    }
-    finalValues["{{totalAmount}}"] = String(total);
-  }
-
-  // 請求書の合計（未入力なら小計＋税）
-  if (type === "請求書") {
-    const sub = parseFloat(finalValues["{{小計}}"] ?? "0");
-    const tax = parseFloat(finalValues["{{税額}}"] ?? "0");
-    if (!finalValues["{{合計}}"] || finalValues["{{合計}}"] === "0") {
-      finalValues["{{合計}}"] = String(sub + tax);
-    }
-  }
-}
 
   function applyDriverMapping(templateDataUrl: string, finalValues: Record<string, string>): string {
-    const base64Body = templateDataUrl.split(',')[1];
+    const base64Body = templateDataUrl.split(",")[1];
     let content = atob(base64Body);
     Object.entries(finalValues).forEach(([placeholder, value]) => {
       try {
@@ -498,7 +531,9 @@ async function ensureRequiredInputs(type: TemplateType, finalValues: Record<stri
         return;
       }
       try {
-        const list = await apiGet<Driver[]>(`/api/drivers?company=${encodeURIComponent(company)}`);
+        const list = await apiGet<Driver[]>(
+          `/api/drivers?company=${encodeURIComponent(company)}`
+        );
         setDriverList(list);
       } catch (e) {
         console.warn("drivers API 取得失敗。localStorageへフォールバック", e);
@@ -515,19 +550,14 @@ async function ensureRequiredInputs(type: TemplateType, finalValues: Record<stri
   }, []);
 
   // ------- マッピング編集モーダル用 -------
-  const [mapKey,        setMapKey]        = useState<string|null>(null);
-  const [placeholders,  setPlaceholders]  = useState<string[]>([]);
-  const [mapping,       setMapping]       = useState<Record<string,string>>({});
+  const [mapKey,       setMapKey]       = useState<string | null>(null);
+  const [placeholders, setPlaceholders] = useState<string[]>([]);
+  const [mapping,      setMapping]      = useState<Record<string, string>>({});
 
   async function openMappingModal(tpl: Template) {
-    const dataUrl = tpl.dataUrl;
-    if (!dataUrl || !dataUrl.startsWith("data:application/pdf;base64,")) {
-      alert("このテンプレートは破損しています（base64 PDFではありません）");
-      return;
-    }
     try {
-      const { extractPlaceholders } = await import("./utils/pdfUtils");
-      const ph = await extractPlaceholders(dataUrl);
+      const { extractPlaceholders } = await import("@/utils/pdfUtils");
+      const ph = await extractPlaceholders(tpl.dataUrl); // URLでもdata:URLでもOK
       if (!Array.isArray(ph) || ph.length === 0) {
         throw new Error("プレースホルダーが見つかりません");
       }
@@ -550,7 +580,7 @@ async function ensureRequiredInputs(type: TemplateType, finalValues: Record<stri
         const meta = JSON.parse(metaRaw);
         localStorage.setItem(mapKey, JSON.stringify({ ...meta, map: mapping }));
       } else {
-        setTemplates(prev => prev.map(t => (t.key === mapKey ? { ...t, map: mapping } : t)));
+        setTemplates((prev) => prev.map((t) => (t.key === mapKey ? { ...t, map: mapping } : t)));
       }
     }
     setMapKey(null);
@@ -572,7 +602,7 @@ async function ensureRequiredInputs(type: TemplateType, finalValues: Record<stri
         <div className="flex items-center gap-2 mb-4">
           <select
             value={tplType}
-            onChange={e => setTplType(e.target.value as any)}
+            onChange={(e) => setTplType(e.target.value as any)}
             className="border px-2 py-1 rounded"
           >
             <option value="発注書">発注書 (PO)</option>
@@ -583,7 +613,7 @@ async function ensureRequiredInputs(type: TemplateType, finalValues: Record<stri
           <input
             type="file"
             accept="application/pdf"
-            onChange={e => setTplFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => setTplFile(e.target.files?.[0] ?? null)}
           />
 
           <button
@@ -601,13 +631,13 @@ async function ensureRequiredInputs(type: TemplateType, finalValues: Record<stri
           <select
             className="border px-2 py-1 rounded"
             value={selectedDriver?.uid ?? ""}
-            onChange={e => {
-              const selected = driverList.find(d => d.uid === e.target.value);
+            onChange={(e) => {
+              const selected = driverList.find((d) => d.uid === e.target.value);
               setSelectedDriver(selected ?? null);
             }}
           >
             <option value="">-- 選択してください --</option>
-            {driverList.map(d => (
+            {driverList.map((d) => (
               <option key={d.uid} value={d.uid}>
                 {d.name}（{d.contractType}）
               </option>
@@ -618,7 +648,7 @@ async function ensureRequiredInputs(type: TemplateType, finalValues: Record<stri
           <select
             className="border px-2 py-1 rounded"
             value={currentTab}
-            onChange={e => setCurrentTab(e.target.value as any)}
+            onChange={(e) => setCurrentTab(e.target.value as any)}
           >
             <option value="PO">発注書</option>
             <option value="PS">支払明細書</option>
@@ -634,23 +664,28 @@ async function ensureRequiredInputs(type: TemplateType, finalValues: Record<stri
                 return;
               }
 
-              const target = templates.find(t => t.type === (
-                currentTab === "PO" ? "発注書" :
-                currentTab === "PS" ? "支払明細書" : "請求書"
-              ));
+              const target = templates.find(
+                (t) =>
+                  t.type ===
+                  (currentTab === "PO"
+                    ? "発注書"
+                    : currentTab === "PS"
+                    ? "支払明細書"
+                    : "請求書")
+              );
               if (!target) {
                 alert("該当テンプレートが見つかりません");
                 return;
               }
 
               // ❶ マッピング最終値
-const finalValues = await buildFinalMapping(target.map ?? {}, selectedDriver);
+              const finalValues = await buildFinalMapping(target.map ?? {}, selectedDriver);
 
-// ✅ 不足値があれば都度入力
-await ensureRequiredInputs(target.type, finalValues);
+              // ✅ 不足値があれば都度入力
+              await ensureRequiredInputs(target.type, finalValues);
 
-// ❷ PDF生成（クライアント）
-const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
+              // ❷ PDF生成（クライアント）
+              const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
 
               // ❸ 保存（Storage + Neon）／失敗時はLS
               const fileName = `${todayStr()}_${selectedDriver.name}_${target.type}.pdf`;
@@ -665,14 +700,20 @@ const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
                   type: target.type,
                 });
               } catch (e) {
-                console.error("Storage/Neon 保存に失敗。localStorage にフォールバックします。", e);
+                console.error(
+                  "Storage/Neon 保存に失敗。localStorage にフォールバックします。",
+                  e
+                );
                 const key = `${keyPrefix}${Date.now()}`;
-                localStorage.setItem(key, JSON.stringify({
-                  driverName: selectedDriver.name,
-                  date: todayStr(),
-                  fileName,
-                  dataUrl: filledDataUrl,
-                }));
+                localStorage.setItem(
+                  key,
+                  JSON.stringify({
+                    driverName: selectedDriver.name,
+                    date: todayStr(),
+                    fileName,
+                    dataUrl: filledDataUrl,
+                  })
+                );
               }
 
               alert("PDFを作成しました");
@@ -694,22 +735,22 @@ const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
             </tr>
           </thead>
           <tbody>
-            {templates.map(tpl => (
+            {templates.map((tpl) => (
               <tr key={tpl.key}>
                 <td className="border px-2 py-1">{tpl.type}</td>
                 <td className="border px-2 py-1">{tpl.name}</td>
                 <td className="border px-2 py-1">{tpl.date}</td>
                 <td className="border px-2 py-1">
                   <button
-  type="button"
-  className="text-blue-600 underline mr-3"
-  onClick={() => {
-    const url = makeObjectUrlIfDataUrl(tpl.dataUrl);
-    setPdfPreview({ open: true, url, title: tpl.name });
-  }}
->
-  表示
-</button>
+                    type="button"
+                    className="text-blue-600 underline mr-3"
+                    onClick={() => {
+                      const url = makeObjectUrlIfDataUrl(tpl.dataUrl);
+                      setPdfPreview({ open: true, url, title: tpl.name });
+                    }}
+                  >
+                    表示
+                  </button>
 
                   <button
                     className="text-green-600 underline mr-3"
@@ -726,7 +767,7 @@ const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
                       } catch {
                         localStorage.removeItem(tpl.key);
                       }
-                      setTemplates(t => t.filter(tp => tp.key !== tpl.key));
+                      setTemplates((t) => t.filter((tp) => tp.key !== tpl.key));
                     }}
                   >
                     削除
@@ -735,10 +776,18 @@ const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
               </tr>
             ))}
             {templates.length === 0 && (
-              <tr><td colSpan={4} className="text-center py-3">まだ何もありません</td></tr>
+              <tr>
+                <td colSpan={4} className="text-center py-3">
+                  まだ何もありません
+                </td>
+              </tr>
             )}
-            {Object.keys(localStorage).filter(k => k.startsWith("tpl_")).length === 0 && (
-              <tr><td colSpan={4} className="text-center py-3">まだ何もありません</td></tr>
+            {Object.keys(localStorage).filter((k) => k.startsWith("tpl_")).length === 0 && (
+              <tr>
+                <td colSpan={4} className="text-center py-3">
+                  まだ何もありません
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
@@ -756,32 +805,34 @@ const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
           </tr>
         </thead>
         <tbody>
-          {pdfs.map(p => (
+          {pdfs.map((p) => (
             <tr key={p.key}>
               <td className="border px-4 py-2">{p.date}</td>
               <td className="border px-4 py-2">{p.driverName}</td>
               <td className="border px-4 py-2">{p.fileName}</td>
               <td className="border px-4 py-2">
-                {/* サーバがURLで返しても dataUrl フィールドに入れておけばUI変更不要 */}
                 <a href={p.dataUrl} download={p.fileName} className="text-blue-600 underline">
                   DL
                 </a>
                 <button
-  type="button"
-  className="text-blue-600 underline ml-2"
-  onClick={() => {
-    const url = makeObjectUrlIfDataUrl(p.dataUrl);
-    setPdfPreview({ open: true, url, title: p.fileName });
-  }}
->
-  表示
-</button>
-
+                  type="button"
+                  className="text-blue-600 underline ml-2"
+                  onClick={() => {
+                    const url = makeObjectUrlIfDataUrl(p.dataUrl);
+                    setPdfPreview({ open: true, url, title: p.fileName });
+                  }}
+                >
+                  表示
+                </button>
               </td>
             </tr>
           ))}
           {pdfs.length === 0 && (
-            <tr><td colSpan={4} className="text-center py-4">当月の提出はまだありません。</td></tr>
+            <tr>
+              <td colSpan={4} className="text-center py-4">
+                当月の提出はまだありません。
+              </td>
+            </tr>
           )}
         </tbody>
       </table>
@@ -799,7 +850,7 @@ const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
           </tr>
         </thead>
         <tbody>
-          {zips.map(z => (
+          {zips.map((z) => (
             <tr key={z.key}>
               <td className="border px-4 py-2">{z.ym}</td>
               <td className="border px-4 py-2">{z.driverName}</td>
@@ -819,29 +870,33 @@ const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
               </td>
               <td className="px-2 py-1 text-center">
                 <button
-  className="text-blue-600 underline"
-  onClick={async () => {
-    try {
-      const blob = await getBlobFromAnyUrl(z.dataUrl);
-      setSendModal({
-        open: true,
-        fileName: `${z.ym}_${z.driverName}.zip`,
-        blob,
-        to: { uid: "dummy-uid", name: z.driverName },
-      });
-    } catch (e) {
-      console.error(e);
-      alert("ZIPの取得に失敗しました");
-    }
-  }}
->
-  送信
-</button>
+                  className="text-blue-600 underline"
+                  onClick={async () => {
+                    try {
+                      const blob = await getBlobFromAnyUrl(z.dataUrl);
+                      setSendModal({
+                        open: true,
+                        fileName: `${z.ym}_${z.driverName}.zip`,
+                        blob,
+                        to: { uid: "dummy-uid", name: z.driverName },
+                      });
+                    } catch (e) {
+                      console.error(e);
+                      alert("ZIPの取得に失敗しました");
+                    }
+                  }}
+                >
+                  送信
+                </button>
               </td>
             </tr>
           ))}
           {zips.length === 0 && (
-            <tr><td colSpan={4} className="text-center py-4">過去 ZIP はありません。</td></tr>
+            <tr>
+              <td colSpan={4} className="text-center py-4">
+                過去 ZIP はありません。
+              </td>
+            </tr>
           )}
         </tbody>
       </table>
@@ -858,40 +913,38 @@ const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
       )}
 
       <h2 className="text-lg font-bold mt-8 mb-2">📦 年次 ZIP</h2>
+
       {/* ==== PDFプレビューモーダル ==== */}
-{pdfPreview?.open && (
-  <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
-    <div className="bg-white w-[92vw] h-[92vh] rounded shadow flex flex-col">
-      <div className="p-3 border-b flex items-center justify-between">
-        <h3 className="font-semibold">{pdfPreview.title}</h3>
-        <div className="flex gap-2">
-          <a
-            href={pdfPreview.url}
-            download={pdfPreview.title?.replace(/\.(pdf)?$/i, "") + ".pdf"}
-            className="text-blue-600 underline"
-          >
-            ダウンロード
-          </a>
-          <button
-            className="px-3 py-1 border rounded"
-            onClick={() => {
-              try { if (pdfPreview.url.startsWith("blob:")) URL.revokeObjectURL(pdfPreview.url); } catch {}
-              setPdfPreview(null);
-            }}
-          >
-            閉じる
-          </button>
+      {pdfPreview?.open && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
+          <div className="bg-white w-[92vw] h-[92vh] rounded shadow flex flex-col">
+            <div className="p-3 border-b flex items-center justify-between">
+              <h3 className="font-semibold">{pdfPreview.title}</h3>
+              <div className="flex gap-2">
+                <a
+                  href={pdfPreview.url}
+                  download={pdfPreview.title?.replace(/\.(pdf)?$/i, "") + ".pdf"}
+                  className="text-blue-600 underline"
+                >
+                  ダウンロード
+                </a>
+                <button
+                  className="px-3 py-1 border rounded"
+                  onClick={() => {
+                    try {
+                      if (pdfPreview.url.startsWith("blob:")) URL.revokeObjectURL(pdfPreview.url);
+                    } catch {}
+                    setPdfPreview(null);
+                  }}
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+            <iframe src={pdfPreview.url} title="PDF" className="flex-1 w-full" style={{ border: "none" }} />
+          </div>
         </div>
-      </div>
-      <iframe
-        src={pdfPreview.url}
-        title="PDF"
-        className="flex-1 w-full"
-        style={{ border: "none" }}
-      />
-    </div>
-  </div>
-)}
+      )}
     </div>
   );
 }
