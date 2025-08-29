@@ -1,5 +1,6 @@
 // src/AdminFileManager.tsx —— 差し替え版（全文）
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import PO_PDF  from "@/assets/発注書テンプレート.pdf?url";
 import PS_PDF  from "@/assets/支払明細書テンプレート.pdf?url";
 import INV_PDF from "@/assets/請求書テンプレート.pdf?url";
@@ -393,7 +394,7 @@ export default function AdminFileManager() {
     const achievements = getDriverAchievements(driver.uid, todayStr());
     Object.entries(baseMap).forEach(([placeholder, mappedKey]) => {
       if (typeof mappedKey !== "string" || !mappedKey.startsWith("実績_")) return;
-      if (!mappedKey.startsWith("実績_")) return;
+      
       const key = mappedKey.replace("実績_", "");
       result[placeholder] = achievements[key] ?? "";
     });
@@ -482,9 +483,18 @@ export default function AdminFileManager() {
   }, []);
 
   // ------- マッピング編集モーダル用 -------
-  const [mapKey,       setMapKey]       = useState<string|null>(null);
-  const [placeholders, setPlaceholders] = useState<string[]>([]);
-  const [mapping,      setMapping]      = useState<Record<string,string>>({});
+const [mapKey,       setMapKey]       = useState<string|null>(null);
+const [placeholders, setPlaceholders] = useState<string[]>([]);
+const [mapping,      setMapping]      = useState<Record<string,string>>({});
+
+useEffect(() => {
+  const lock = (pdfPreview?.open || !!mapKey);
+  if (lock) {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }
+}, [pdfPreview, mapKey]);
 
   async function openMappingModal(tpl: Template) {
     try {
@@ -802,34 +812,108 @@ export default function AdminFileManager() {
       <h2 className="text-lg font-bold mt-8 mb-2">📦 年次 ZIP</h2>
 
       {/* ==== PDFプレビューモーダル ==== */}
-      {pdfPreview?.open && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
-          <div className="bg-white w-[92vw] h-[92vh] rounded shadow flex flex-col">
-            <div className="p-3 border-b flex items-center justify-between">
-              <h3 className="font-semibold">{pdfPreview.title}</h3>
-              <div className="flex gap-2">
-                <a
-                  href={pdfPreview.url}
-                  download={pdfPreview.title?.replace(/\.(pdf)?$/i, "") + ".pdf"}
-                  className="text-blue-600 underline"
-                >
-                  ダウンロード
-                </a>
-                <button
-                  className="px-3 py-1 border rounded"
-                  onClick={() => {
-                    try { if (pdfPreview.url.startsWith("blob:")) URL.revokeObjectURL(pdfPreview.url); } catch {}
-                    setPdfPreview(null);
-                  }}
-                >
-                  閉じる
-                </button>
-              </div>
-            </div>
-            <iframe src={pdfPreview.url} title="PDF" className="flex-1 w-full" style={{ border: "none" }} />
-          </div>
+{pdfPreview?.open && createPortal(
+  <div className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center">
+    <div className="bg-white w-[92vw] h-[92vh] rounded shadow flex flex-col">
+      <div className="p-3 border-b flex items-center justify-between">
+        <h3 className="font-semibold">{pdfPreview.title}</h3>
+        <div className="flex gap-3 items-center">
+          <a
+            href={pdfPreview.url}
+            download={(pdfPreview.title || "preview").replace(/\.(pdf)?$/i, "") + ".pdf"}
+            className="text-blue-600 underline"
+          >
+            ダウンロード
+          </a>
+          <a
+            href={pdfPreview.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-gray-600 underline"
+          >
+            新しいタブで開く
+          </a>
+          <button
+            className="px-3 py-1 border rounded"
+            onClick={() => {
+              try {
+                if (pdfPreview.url.startsWith("blob:")) URL.revokeObjectURL(pdfPreview.url);
+              } catch {}
+              setPdfPreview(null);
+            }}
+          >
+            閉じる
+          </button>
         </div>
-      )}
+      </div>
+      <iframe src={pdfPreview.url} title="PDF" className="flex-1 w-full" style={{ border: "none" }} />
+    </div>
+  </div>,
+  document.body
+)}
+
+     {/* ==== マッピング編集モーダル ==== */}
+{mapKey && createPortal(
+  <div className="fixed inset-0 z-[10000] bg-black/50 flex items-center justify-center">
+    <div className="bg-white w-[92vw] max-w-5xl h-[88vh] rounded-xl shadow-2xl flex flex-col">
+      <div className="px-4 h-12 border-b flex items-center justify-between">
+        <h3 className="font-semibold">マッピング編集</h3>
+        <div className="flex gap-2">
+          <button
+            className="px-3 py-1 bg-gray-200 rounded"
+            onClick={() => setMapKey(null)}
+          >
+            閉じる
+          </button>
+          <button
+            className="px-3 py-1 bg-blue-600 text-white rounded"
+            onClick={saveMapping}
+          >
+            保存
+          </button>
+        </div>
+      </div>
+
+      <div className="p-4 overflow-auto flex-1">
+        <table className="table-auto w-full border">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className="border px-2 py-1 w-1/2">
+                プレースホルダー（PDF側）
+              </th>
+              <th className="border px-2 py-1">
+                アプリの項目キー（例：name / address / 実績_totalPay など）
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {placeholders.map(ph => (
+              <tr key={ph}>
+                <td className="border px-2 py-1 font-mono text-xs">{ph}</td>
+                <td className="border px-2 py-1">
+                  <input
+                    className="w-full border rounded px-2 py-1"
+                    value={mapping[ph] ?? ""}
+                    onChange={e =>
+                      setMapping(prev => ({ ...prev, [ph]: e.target.value }))
+                    }
+                    placeholder="例）name / company / 実績_totalPay"
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <p className="text-xs text-gray-500 mt-3">
+          ※ 実績系は <code>実績_</code> プレフィックスで紐づけ（例：<code>実績_totalHours</code>）。
+          保存後、「作成」で反映されます。
+        </p>
+      </div>
+    </div>
+  </div>,
+  document.body
+)}
     </div>
   );
 }
