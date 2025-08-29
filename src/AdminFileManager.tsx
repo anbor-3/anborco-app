@@ -383,13 +383,14 @@ export default function AdminFileManager() {
 
     Object.entries(baseMap).forEach(([placeholder, driverField]) => {
       if (!placeholder.startsWith("{{") || placeholder in result) return;
-      if (driverField.startsWith("実績_")) return;
+      if (typeof driverField === "string" && driverField.startsWith("実績_")) return;
       // @ts-ignore
       result[placeholder] = (driver as any)[driverField] ?? "";
     });
 
     const achievements = getDriverAchievements(driver.uid, todayStr());
     Object.entries(baseMap).forEach(([placeholder, mappedKey]) => {
+      if (typeof mappedKey !== "string" || !mappedKey.startsWith("実績_")) return;
       if (!mappedKey.startsWith("実績_")) return;
       const key = mappedKey.replace("実績_", "");
       result[placeholder] = achievements[key] ?? "";
@@ -444,6 +445,10 @@ export default function AdminFileManager() {
   }
 
   function applyDriverMapping(templateDataUrl: string, finalValues: Record<string, string>): string {
+  if (!templateDataUrl?.startsWith("data:application/pdf;base64,")) {
+    console.warn("invalid template data url");
+    return templateDataUrl; // 異常値でも落ちないように無変換で返す
+  }
     const base64Body = templateDataUrl.split(',')[1];
     let content = atob(base64Body);
     Object.entries(finalValues).forEach(([placeholder, value]) => {
