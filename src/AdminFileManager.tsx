@@ -9,6 +9,8 @@ import { getAuth } from "firebase/auth";
 import { auth, storage } from "./firebaseClient";
 import { ref, uploadString, getDownloadURL } from "firebase/storage";
 
+;(globalThis as any).DEFAULT_MAPS_ALIAS ??= { PO:{}, PS:{}, INV:{} };
+
 // ---- API helpers（Authトークン付き）----
 async function apiGet<T>(path: string): Promise<T> {
   const idToken = await getAuth().currentUser?.getIdToken();
