@@ -1,9 +1,7 @@
 // ShiftRegister.tsx
 import React, { useState, useEffect } from 'react';
 import projectList from "../data/ProjectList";
-import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-import { createPS } from "../utils/pdfUtils";
 import autoTable from "jspdf-autotable";
 
 // ▼ ドライバーの最小型
@@ -415,13 +413,14 @@ const handleExportPDF = async () => {
   table.classList.add('pdf-export');
 
   /* ===== 2. html2canvas で高解像度キャプチャ ===== */
-  const canvas = await html2canvas(table, {
-    scale:        3,                     // 解像度アップ
-    scrollX:      0,
-    scrollY:      0,
-    windowWidth:  table.scrollWidth,
-    windowHeight: table.scrollHeight,
-  });
+  const { default: html2canvas } = await import('html2canvas');
+const canvas = await html2canvas(table, {
+  scale: 3,
+  scrollX: 0,
+  scrollY: 0,
+  windowWidth: table.scrollWidth,
+  windowHeight: table.scrollHeight,
+});
 
   table.classList.remove('pdf-export');  // 後始末
 
@@ -607,25 +606,29 @@ localStorage.setItem(key, JSON.stringify(shifts));
     {/* --- 実績確定ボタン／表示 --- */}
     {!isResultConfirmed ? (
       <button
-        onClick={() => {
-          if (window.confirm('実績を確定しますか？ 確定後は編集できません。')) {
-            setIsResultConfirmed(true);
-            localStorage.setItem(makeKey("confirmedResult"), 'true');
-            driverList.forEach(async (drv) => {
-  const hours = calculateTotalMinutes(drv.id) / 60;
-  const dataUrl = await createPS(drv.name, year, month, hours);
-// data:application/pdf;base64,... をそのままダウンロード
-const a = document.createElement('a');
-a.href = dataUrl;
-a.download = `PS_${year}${String(month).padStart(2,"0")}_${drv.id}.pdf`;
-a.click();
-});
-          }
-        }}
-        className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700"
-      >
-        実績確定
-      </button>
+  onClick={async () => {
+    if (window.confirm('実績を確定しますか？ 確定後は編集できません。')) {
+      setIsResultConfirmed(true);
+      localStorage.setItem(makeKey("confirmedResult"), 'true');
+
+      // ★ ここで動的 import（1回だけ読み込む）
+      const { createPS } = await import("../utils/pdfUtils");
+
+      for (const drv of driverList) {
+        const hours = calculateTotalMinutes(drv.id) / 60;
+        const dataUrl = await createPS(drv.name, year, month, hours);
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = `PS_${year}${String(month).padStart(2,"0")}_${drv.id}.pdf`;
+        a.click();
+      }
+    }
+  }}
+  className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+>
+  実績確定
+</button>
+
     ) : (
       <span className="text-indigo-700 font-semibold">✅ 実績確定済み</span>
     )}

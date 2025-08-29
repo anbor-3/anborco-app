@@ -1,5 +1,5 @@
-import  { useState } from "react";
-import Select from "react-select"; // ✅ react-selectを追加
+import { useState } from "react";
+import Select, { MultiValue } from "react-select"; // ← 型も一緒にimport
 
 export type Customer = {
   id: string;
@@ -22,7 +22,7 @@ export type Customer = {
   paymentSite: string;
   paymentMethod: string;
   //--------------------------------------------------------------------
-  note?: string;          // 契約書 PDF URL 等
+  note?: string;           // 契約書 PDF URL 等
   selectedPlans: string[]; // ✅ 複数プランを保持
 };
 
@@ -33,6 +33,9 @@ type Props = {
   pricingPlans: { id: string; name: string }[]; // ✅ 料金プランデータ
 };
 
+// ← 追加: react-select の option 用に型を定義
+type Option = { value: string; label: string };
+
 export default function NewCustomerModal({ isOpen, onClose, onSave, pricingPlans }: Props) {
   // ✅ selectedPlansを配列で保持
   const [form, setForm] = useState<Omit<Customer, "id" | "uid" | "upw">>({
@@ -40,12 +43,17 @@ export default function NewCustomerModal({ isOpen, onClose, onSave, pricingPlans
     plan: "", startDate: "", endDate: "",
     contactPerson: "", contactPhone: "", email: "",
     corporateNo: "", invoiceNo: "", paymentSite: "",
-    paymentMethod: "", note: "", selectedPlans: [] // ✅ 初期値を配列に変更
+    paymentMethod: "", note: "", selectedPlans: [] // ✅ 初期値を配列に
   });
 
   if (!isOpen) return null;
 
-  const genRandom = (len = 8) => Math.random().toString(36).slice(-len);
+  // react-select に渡す options（毎回 map してOK、気になるなら useMemo でも可）
+  const planOptions: Option[] = pricingPlans.map((p) => ({ value: p.id, label: p.name }));
+  const selectedOptions: Option[] = form.selectedPlans.map((id) => ({
+    value: id,
+    label: pricingPlans.find((p) => p.id === id)?.name || id,
+  }));
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -83,21 +91,14 @@ export default function NewCustomerModal({ isOpen, onClose, onSave, pricingPlans
           {/* ✅ プラン選択をreact-selectに変更 */}
           <label className="space-y-1 col-span-2">
             <span className="font-semibold">契約プラン</span>
-            <Select
+            <Select<Option, true>
               isMulti
-              options={pricingPlans.map(plan => ({
-                value: plan.id,
-                label: plan.name
-              }))}
-              value={form.selectedPlans.map(id => ({
-                value: id,
-                label: pricingPlans.find(p => p.id === id)?.name || ""
-              }))}
-              onChange={(selected) => {
-   const arr = Array.isArray(selected) ? selected : [];
-   const values = arr.map(item => item.value);
-   setForm({ ...form, selectedPlans: values });
- }}
+              options={planOptions}
+              value={selectedOptions}
+              // ← ここを型付け（MultiValue<Option>）
+              onChange={(selected: MultiValue<Option>) => {
+                setForm({ ...form, selectedPlans: selected.map((o) => o.value) });
+              }}
             />
           </label>
 
@@ -204,10 +205,10 @@ export default function NewCustomerModal({ isOpen, onClose, onSave, pricingPlans
             onClick={() => {
               // ここでは入力データだけ渡す（id/uid/upw は親で付与）
               onSave({
-               ...form,
-               // 互換のため旧 plan フィールドにも先頭プランを入れておく
-               plan: form.selectedPlans[0] || ""
-             });
+                ...form,
+                // 互換のため旧 plan フィールドにも先頭プランを入れておく（ID保管）
+                plan: form.selectedPlans[0] || ""
+              });
               onClose();
             }}
           >

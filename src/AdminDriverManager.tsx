@@ -3,10 +3,11 @@ import { useState, useEffect } from "react";
 import { getAuth } from "firebase/auth";
 
 /** ✅ 本番向け API 基点（環境変数があれば採用） */
-const API_BASE_URL =
-  (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_API_BASE_URL)
-    ? String((process as any).env.NEXT_PUBLIC_API_BASE_URL).replace(/\/$/, "")
+const RAW_BASE =
+  (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_BASE_URL)
+    ? String((import.meta as any).env.VITE_API_BASE_URL)
     : "";
+const API_BASE_URL = RAW_BASE.replace(/\/$/, "");
 const api = (path: string) => `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
 const debounce = <T extends (...args: any[]) => any>(fn: T, delay = 500) => {
@@ -423,12 +424,13 @@ const AdminDriverManager = () => {
 
       <div className="flex items-center gap-4 mb-2">
         <button
-   className="px-4 py-1 rounded text-white bg-blue-600 hover:bg-blue-700"
-   onClick={handleAddRow} disabled={!loaded} title={!loaded ? "読み込み中…" : (finiteMax ? `上限 ${caps.maxUsers} 名（管理者+ドライバー合算）` : "無制限")}>
-   title={finiteMax ? `上限 ${caps.maxUsers} 名（管理者+ドライバー合算）` : "無制限"}
- 
-          ドライバー追加
-        </button>
+  className="px-4 py-1 rounded text-white bg-blue-600 hover:bg-blue-700"
+  onClick={handleAddRow}
+  disabled={!loaded}
+  title={!loaded ? "読み込み中…" : (finiteMax ? `上限 ${caps.maxUsers} 名（管理者+ドライバー合算）` : "無制限")}>
+  ドライバー追加
+</button>
+
         <button className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-1 rounded" onClick={updateDriverStatus}>
           ステータス更新
         </button>

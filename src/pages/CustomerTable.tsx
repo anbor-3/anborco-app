@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from "react";
-import NewCustomerModal, { Customer } from "../pages/NewCustomerModal";
+import NewCustomerModal from "../pages/NewCustomerModal";
+import type { Customer } from "../pages/NewCustomerModal"; // 型としてのみ import
 import { createCustomerWithAuth } from "../utils/createCustomerWithAuth";
 import Select from "react-select";
 
 /** ✅ 本番向け API 基点：NEXT_PUBLIC_API_BASE_URL があれば使う */
-const API_BASE_URL =
-  (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_API_BASE_URL)
-    ? String((process as any).env.NEXT_PUBLIC_API_BASE_URL).replace(/\/$/, "")
+const RAW_BASE =
+  (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_BASE_URL)
+    ? String((import.meta as any).env.VITE_API_BASE_URL)
     : "";
+const API_BASE_URL = RAW_BASE.replace(/\/$/, "");
 const api = (path: string) => `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
 /** ✅ プラン定義（機能フラグ付き） */
@@ -176,12 +178,19 @@ export default function CustomerTable() {
 
           // 6) 本番APIへ保存（失敗してもUIは維持）
           try {
-            await fetch(api("/api/customers"), {
-              method: "POST",
-              credentials: "include",
-              headers: { "Content-Type": "application/json", Accept: "application/json" },
-              body: JSON.stringify(withAuth),
-            });
+            const { getAuth } = await import("firebase/auth");
+const idToken = await getAuth().currentUser?.getIdToken();
+
+await fetch(api("/api/customers"), {
+  method: "POST",
+  credentials: "include",
+  headers: {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+  },
+  body: JSON.stringify(withAuth),
+});
           } catch (e) {
             console.warn("サーバ保存に失敗（ローカルには保存済み）:", e);
           }
