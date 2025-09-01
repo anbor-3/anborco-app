@@ -112,11 +112,12 @@ export const fetchDrivers = async (company: string): Promise<Driver[]> => {
 };
 
 // ✅ Neonに保存する共通関数（Fileは送らない）
-const persist = async (company: string, drivers: Driver[]) => {
+const persist = async (company: string, drivers: Driver[], opts?: { silent?: boolean }) => {
+  const silent = !!opts?.silent;
   const auth = getAuth();
   const idToken = await auth.currentUser?.getIdToken();
   if (!idToken) {
-    alert("未ログインです。再ログインしてください。");
+    if (!silent) alert("未ログインです。再ログインしてください。");
     throw new Error("no token");
   }
   const sanitized = drivers.map(({ attachments, licenseFiles, ...rest }) => rest);
@@ -130,7 +131,7 @@ const persist = async (company: string, drivers: Driver[]) => {
     if (!res.ok) throw new Error(`Save failed: ${res.status}`);
   } catch (e) {
     console.error("❌ 保存に失敗:", e);
-    alert("保存に失敗しました。ネットワークをご確認ください。");
+    if (!silent) alert("保存に失敗しました。ネットワークをご確認ください。");
     throw e;
   }
 };
@@ -146,7 +147,9 @@ export interface Driver {
 }
 
 const AdminDriverManager = () => {
-  const persistDebounced = debounce((company: string, drivers: Driver[]) => { persist(company, drivers); }, 600);
+  const persistDebounced = debounce((company: string, drivers: Driver[]) => {
+  persist(company, drivers, { silent: true });
+}, 600);
 
   const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
   const company = admin.company || "";
@@ -329,50 +332,55 @@ const AdminDriverManager = () => {
 
   // ★ 追加処理を共通化（skipCheck=true で上限チェックを飛ばす）
   const addDriverRow = async (skipCheck = false) => {
-    const neededTotal = stats.adminCount + drivers.length + 1;
-    if (!skipCheck && finiteMax && neededTotal > (caps.maxUsers as number)) {
-      openUpgradeFlow(neededTotal);
-      return;
-    }
+  const neededTotal = stats.adminCount + drivers.length + 1;
+  if (!skipCheck && finiteMax && neededTotal > (caps.maxUsers as number)) {
+    openUpgradeFlow(neededTotal);
+    return;
+  }
 
-    const adminCompany = company;
-    const newLoginId = `driver${String(drivers.length + 1).padStart(4, "0")}`;
-    const newPassword = genRandom(8);
+  const adminCompany = company;
+  const newIndex = drivers.length; // ← 先に確定しておく
+  const newLoginId = `driver${String(newIndex + 1).padStart(4, "0")}`;
+  const newPassword = genRandom(8);
 
-    const updated = [
-      ...drivers,
-      {
-        id: `driver${String(drivers.length + 1).padStart(4, "0")}`,
-        uid: `uid${Date.now()}`,
-        loginId: newLoginId,
-        password: newPassword,
-        name: "",
-        contractType: "社員",
-        invoiceNo: "",
-        company: adminCompany,
-        phone: "",
-        address: "",
-        mail: "",
-        birthday: "",
-        licenseFiles: [],
-        licenseExpiry: "",
-        attachments: [],
-        hidden: false,
-        status: "予定なし",
-        isWorking: false,
-        resting: false,
-        shiftStart: "09:00",
-        shiftEnd: "18:00",
-      } as Driver,
-    ];
-
-    setDrivers(updated);
-    await persist(company, updated);
-
-    setEditingIndex(drivers.length);
-    setExpandedRowIndex(drivers.length);
-    alert(`✅ ドライバーが追加されました\nログインID: ${newLoginId}\nパスワード: ${newPassword}`);
+  const newDriver: Driver = {
+    id: `driver${String(newIndex + 1).padStart(4, "0")}`,
+    uid: `uid${Date.now()}`,
+    loginId: newLoginId,
+    password: newPassword,
+    name: "",
+    contractType: "社員",
+    invoiceNo: "",
+    company: adminCompany,
+    phone: "",
+    address: "",
+    mail: "",
+    birthday: "",
+    licenseFiles: [],
+    licenseExpiry: "",
+    attachments: [],
+    hidden: false,
+    status: "予定なし",
+    isWorking: false,
+    resting: false,
+    shiftStart: "09:00",
+    shiftEnd: "18:00",
   };
+
+  setDrivers(prev => {
+    const updated = [...prev, newDriver];
+    // 追加直後は「サイレント保存 or 入力後デバウンス保存」へ
+    persistDebounced(company, updated);
+    return updated;
+  });
+
+  // 追加直後から即編集 & 詳細展開
+  setEditingIndex(newIndex);
+  setExpandedRowIndex(newIndex);
+
+  // うるさい alert は出さず、右上通知に控えめに出す
+  addNotification(`ドライバー行を追加しました（ログインID: ${newLoginId} / 初期PW: ${newPassword}）`);
+};
 
   const handleAddRow = async () => addDriverRow(false);
 
@@ -424,6 +432,7 @@ const AdminDriverManager = () => {
 
       <div className="flex items-center gap-4 mb-2">
         <button
+  type="button"
   className="px-4 py-1 rounded text-white bg-blue-600 hover:bg-blue-700"
   onClick={handleAddRow}
   disabled={!loaded}
@@ -481,7 +490,18 @@ const AdminDriverManager = () => {
                   }}>削除</button>
                 </td>
                 <td className="border px-2 py-1 break-all">{d.id}</td>
-                <td className="border px-2 py-1 break-all">{editingIndex===idx ? (<input className="w-full text-sm" value={d.name} onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).name=e.target.value; setDrivers(u); persistDebounced(company,u); }} />) : d.name}</td>
+                <td className="border px-2 py-1 break-all">
+  {editingIndex===idx ? (
+    <input
+      autoFocus
+      className="w-full text-sm"
+      placeholder="例）佐藤 太郎"
+      value={d.name}
+      onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).name=e.target.value; setDrivers(u); persistDebounced(company,u); }}
+    />
+  ) : d.name}
+</td>
+
                 <td className="border px-2 py-1 break-all">
                   {editingIndex===idx ? (
                     <select className="w-full text-sm" value={d.contractType}

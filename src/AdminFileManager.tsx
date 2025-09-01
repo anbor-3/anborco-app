@@ -151,6 +151,40 @@ function getDefaultMapByType(t: TemplateType | "PO" | "PS" | "INV"): Record<stri
   }
 }
 
+/* ▼▼ ① ここから追加 ▼▼ */
+const SYNONYMS: Record<string, string> = {
+  "{{ドライバー名}}": "name",
+  "{{name}}": "name",
+  "{{会社名}}": "company",
+  "{{company}}": "company",
+  "{{電話}}": "phone",
+  "{{tel}}": "phone",
+  "{{住所}}": "address",
+  "{{請求先}}": "company",
+  "{{請求対象名}}": "name",
+  "{{合計配達数}}": "実績_totalDeliveries",
+  "{{総稼働時間}}": "実績_totalHours",
+  "{{走行距離}}": "実績_totalDistance",
+  "{{支払総額}}": "実績_totalPay",
+  "{{小計}}": "実績_subtotal",
+  "{{税額}}": "実績_tax",
+  "{{合計}}": "実績_total",
+  "{{today}}": "{{today}}",
+  "{{発注No}}": "{{発注No}}",
+  "{{担当者}}": "{{担当者}}",
+};
+
+function autoGuessMapping(base: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = { ...base };
+  for (const ph of Object.keys(out)) {
+    if (!out[ph] || String(out[ph]).trim() === "") {
+      if (ph in SYNONYMS) out[ph] = SYNONYMS[ph];
+    }
+  }
+  return out;
+}
+/* ▲▲ ① ここまで追加 ▲▲ */
+
 const todayStr = () => new Date().toISOString().split("T")[0];
 
 export default function AdminFileManager() {
@@ -496,19 +530,15 @@ useEffect(() => {
   }
 }, [pdfPreview, mapKey]);
 
-  async function openMappingModal(tpl: Template) {
-    try {
-      const { extractPlaceholders } = await import("@/utils/pdfUtils");
-      const ph = await extractPlaceholders(tpl.dataUrl);
-      if (!Array.isArray(ph) || ph.length === 0) throw new Error("プレースホルダーが見つかりません");
-      setMapKey(tpl.key);
-      setPlaceholders(ph);
-      setMapping(tpl.map ?? {});
-    } catch (e) {
-      console.error("❌ PDF読み取り失敗:", e);
-      alert("PDFの読み取りに失敗しました（ファイルが破損しているか、形式不明）");
-    }
-  }
+  function openMappingModal(tpl: Template) {
+  const base = (tpl.map && Object.keys(tpl.map).length > 0)
+    ? tpl.map!
+    : getDefaultMapByType(tpl.type);
+
+  setMapKey(tpl.key);
+  setPlaceholders(Object.keys(base));
+  setMapping(base);
+}
 
   async function saveMapping() {
     if (!mapKey) return;
@@ -603,7 +633,13 @@ useEffect(() => {
               ));
               if (!target) { alert("該当テンプレートが見つかりません"); return; }
 
-              const finalValues = await buildFinalMapping(target.map ?? {}, selectedDriver);
+              const base = (target.map && Object.keys(target.map).length > 0)
+  ? target.map!
+  : getDefaultMapByType(target.type);
+
+const guessed = autoGuessMapping(base);
+const finalValues = await buildFinalMapping(guessed, selectedDriver);
+
               await ensureRequiredInputs(target.type, finalValues);
               const filledDataUrl = applyDriverMapping(target.dataUrl, finalValues);
 
@@ -859,19 +895,30 @@ useEffect(() => {
       <div className="px-4 h-12 border-b flex items-center justify-between">
         <h3 className="font-semibold">マッピング編集</h3>
         <div className="flex gap-2">
-          <button
-            className="px-3 py-1 bg-gray-200 rounded"
-            onClick={() => setMapKey(null)}
-          >
-            閉じる
-          </button>
-          <button
-            className="px-3 py-1 bg-blue-600 text-white rounded"
-            onClick={saveMapping}
-          >
-            保存
-          </button>
-        </div>
+  <button
+    className="px-3 py-1 bg-gray-200 rounded"
+    onClick={() => {
+      const key = window.prompt("追加するプレースホルダー名（例：{{foo}}）", "");
+      if (!key) return;
+      setPlaceholders(prev => (prev.includes(key) ? prev : [...prev, key]));
+      setMapping(prev => ({ ...prev, [key]: prev[key] ?? "" }));
+    }}
+  >
+    ＋ 追加
+  </button>
+
+  <button
+    className="px-3 py-1 bg-indigo-600 text-white rounded"
+    onClick={() => setMapping(prev =>
+      autoGuessMapping(Object.fromEntries(placeholders.map(k => [k, prev[k] ?? ""])))
+    )}
+  >
+    自動推測で埋める
+  </button>
+
+  <button className="px-3 py-1 bg-gray-200 rounded" onClick={() => setMapKey(null)}>閉じる</button>
+  <button className="px-3 py-1 bg-blue-600 text-white rounded" onClick={saveMapping}>保存</button>
+</div>
       </div>
 
       <div className="p-4 overflow-auto flex-1">

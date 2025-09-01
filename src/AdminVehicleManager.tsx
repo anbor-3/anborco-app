@@ -236,9 +236,9 @@ React.useEffect(() => {
     const localVehicles = JSON.parse(
       localStorage.getItem(vehicleStorageKey(company)) || "[]"
     ) as Vehicle[];
-    const localDriversRaw = JSON.parse(
-      localStorage.getItem("driverList") || "[]"
-    ) as Array<{ id?: string; name?: string }>;
+    const s1 = localStorage.getItem(`driverList_${company}`);
+const s2 = localStorage.getItem("driverList"); // 古いキー互換
+const localDriversRaw = JSON.parse(s1 || s2 || "[]") as Array<{ id?: string; name?: string }>;
 
     vList = Array.isArray(localVehicles) ? localVehicles : [];
     dList = Array.isArray(localDriversRaw)
@@ -251,9 +251,13 @@ React.useEffect(() => {
   }
 }
       if (!aborted) {
-        setVehicles(vList ?? []);
-        setDrivers(dList ?? []);
-      }
+  // 追加中のドラフト行（id<0）を保持したまま最新に差し替え
+  setVehicles((prev) => {
+    const drafts = prev.filter((x) => x.id < 0);
+    return [...drafts, ...(vList ?? [])];
+  });
+  setDrivers(dList ?? []);
+}
     } catch (e: any) {
       if (!aborted) setError(e?.message ?? "データの取得に失敗しました。");
     } finally {
@@ -271,18 +275,25 @@ React.useEffect(() => {
         VehiclesAPI.list(company),
         DriversAPI.list(company),
       ]);
-      setVehicles(vList ?? []);
-      setDrivers(dList ?? []);
+      setVehicles((prev) => {
+  const drafts = prev.filter((x) => x.id < 0);
+  return [...drafts, ...(vList ?? [])];
+});
+setDrivers(dList ?? []);
     } catch (e: any) {
   if (e?.status === 404 || e?.status === 415) {
     const localV = JSON.parse(localStorage.getItem(vehicleStorageKey(company)) || "[]") as Vehicle[];
     const localDRaw = JSON.parse(localStorage.getItem("driverList") || "[]") as Array<{ id?: string; name?: string }>;
-    setVehicles(Array.isArray(localV) ? localV : []);
-    setDrivers(
-      Array.isArray(localDRaw)
-        ? localDRaw.filter(x => x && x.name).map((x, i) => ({ id: x.id ?? String(i + 1), name: x.name! }))
-        : []
-    );
+    setVehicles((prev) => {
+  const drafts = prev.filter((x) => x.id < 0);
+  const lv = Array.isArray(localV) ? localV : [];
+  return [...drafts, ...lv];
+});
+setDrivers(
+  Array.isArray(localDRaw)
+    ? localDRaw.filter(x => x && x.name).map((x, i) => ({ id: x.id ?? String(i + 1), name: x.name! }))
+    : []
+);
   } else {
     console.error(e);
   }
@@ -502,11 +513,12 @@ setVehicles((prev) => {
       {info && <div className="mb-4 p-3 rounded bg-green-50 text-green-700 text-sm">{info}</div>}
 
       <button
-        className="mb-6 w-48 py-3 bg-blue-600 text-white rounded text-lg font-semibold hover:bg-blue-700 disabled:opacity-60"
-        onClick={handleAdd}
-      >
-        車両追加
-      </button>
+  type="button"
+  className="mb-6 w-48 py-3 bg-blue-600 text-white rounded text-lg font-semibold hover:bg-blue-700 disabled:opacity-60"
+  onClick={handleAdd}
+>
+  車両追加
+</button>
 
       <div className="w-full flex-1 overflow-auto">
         <table className="w-full table-auto border border-gray-300 shadow rounded-lg text-sm">
@@ -580,10 +592,11 @@ setVehicles((prev) => {
                   <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
                     {isEditing ? (
                       <input
-                        className="w-full px-2 py-1 border rounded"
-                        value={v.type}
-                        onChange={(e) => patchVehicle(v.id, { type: e.target.value })}
-                      />
+  autoFocus
+  className="w-full px-2 py-1 border rounded"
+  value={v.type}
+  onChange={(e) => patchVehicle(v.id, { type: e.target.value })}
+/>
                     ) : (
                       v.type || "-"
                     )}
@@ -619,16 +632,17 @@ setVehicles((prev) => {
                   <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
                     {isEditing ? (
                       <select
-                        className="w-full px-2 py-1 border rounded"
-                        value={v.user}
-                        onChange={(e) => patchVehicle(v.id, { user: e.target.value })}
-                      >
-                        {driverOptions.map((name) => (
-                          <option key={name} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </select>
+  className="w-full px-2 py-1 border rounded"
+  value={v.user}
+  onChange={(e) => patchVehicle(v.id, { user: e.target.value })}
+>
+  <option value="">—選択—</option>
+  {driverOptions.map((name) => (
+    <option key={name} value={name}>
+      {name}
+    </option>
+  ))}
+</select>
                     ) : (
                       v.user || "-"
                     )}
