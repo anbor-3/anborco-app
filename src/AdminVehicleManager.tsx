@@ -181,16 +181,61 @@ const vehicleStorageKey = (company: string) => `vehicleList_${company}`;
 /* ========================= Component ========================= */
 
 const VehicleManager: React.FC = () => {
-  // 会社テナントの決定（既存仕様に合わせて両対応）
-  const cur = React.useMemo(() => {
+  // ▼ company を state 化し、できる限り多くのソースから解決
+const [company, setCompany] = React.useState<string>("");
+
+// 同期的にとれるものは即時トライ
+function pickCompanySync(): string {
+  try {
+    const cur = JSON.parse(localStorage.getItem("currentUser") || "{}");
+    if (cur?.company) return String(cur.company).trim();
+  } catch {}
+  try {
+    const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
+    if (admin?.company) return String(admin.company).trim();
+  } catch {}
+  const saved = (localStorage.getItem("company") || "").trim();
+  if (saved) return saved;
+  try {
+    const qs = new URLSearchParams(window.location.search).get("company");
+    if (qs) return qs.trim();
+  } catch {}
+  return "";
+}
+
+React.useEffect(() => {
+  // まずは同期的な候補
+  const first = pickCompanySync();
+  if (first) {
+    setCompany(first);
+    localStorage.setItem("company", first);
+    return;
+  }
+
+  // 非同期の候補（Firebase クレーム / /api/me）
+  (async () => {
     try {
-      return JSON.parse(localStorage.getItem("currentUser") || "{}");
-    } catch {
-      return {};
-    }
-  }, []);
-  const fallbackCompany = localStorage.getItem("company") || "";
-  const company = (cur?.company || fallbackCompany || "").trim();
+      const auth = (await import("firebase/auth")).getAuth();
+      const result = await auth.currentUser?.getIdTokenResult?.();
+      const claim = (result?.claims as any)?.company;
+      if (claim) {
+        setCompany(String(claim));
+        localStorage.setItem("company", String(claim));
+        return;
+      }
+    } catch {}
+
+    try {
+      // 任意: /api/me がある場合のみ
+      const me = await apiJSON<{ company?: string }>("/api/me").catch(() => null);
+      if (me?.company) {
+        setCompany(String(me.company));
+        localStorage.setItem("company", String(me.company));
+        return;
+      }
+    } catch {}
+  })();
+}, []);
 
   const [vehicles, setVehicles] = React.useState<Vehicle[]>([]);
   const [drivers, setDrivers] = React.useState<Driver[]>([]);
@@ -200,6 +245,13 @@ const VehicleManager: React.FC = () => {
   const [savingId, setSavingId] = React.useState<number | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+  if (!company) return;
+  setVehicles(prev =>
+    prev.map(v => (!v.company?.trim() ? { ...v, company } : v))
+  );
+}, [company]);
 
   // カスタム項目はとりあえずローカルで管理（要件次第ではAPI化）
   React.useEffect(() => {
@@ -215,10 +267,11 @@ React.useEffect(() => {
   let aborted = false;
   (async () => {
     if (!company) {
-      setLoading(false);
-      setError("会社情報が見つかりません。");
-      return;
-    }
+  // 会社未確定でも UI は開く（追加行は出せる）
+  setLoading(false);
+  setError(null); // ← エラーで止めない
+  return;
+}
     setLoading(true);
     setError(null);
     try {
@@ -232,7 +285,8 @@ React.useEffect(() => {
         ]);
       } catch (e: any) {
   // 404（API未配備）または 415（HTML返却などJSONでない）ならローカルへフォールバック
-  if (e?.status === 404 || e?.status === 415) {
+  const s = e?.status ?? 0; // fetch失敗などは status 未設定なので 0 扱い
+  if ([0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
     const localVehicles = JSON.parse(
       localStorage.getItem(vehicleStorageKey(company)) || "[]"
     ) as Vehicle[];
@@ -269,6 +323,7 @@ const localDriversRaw = JSON.parse(s1 || s2 || "[]") as Array<{ id?: string; nam
 
   // 共有イベントで再読込（ドライバー/車両）
   React.useEffect(() => {
+    if (!company) return;
   const reload = async () => {
     try {
       const [vList, dList] = await Promise.all([
@@ -280,11 +335,15 @@ const localDriversRaw = JSON.parse(s1 || s2 || "[]") as Array<{ id?: string; nam
   return [...drafts, ...(vList ?? [])];
 });
 setDrivers(dList ?? []);
-    } catch (e: any) {
-  if (e?.status === 404 || e?.status === 415) {
+   } catch (e: any) {
+  const s = e?.status ?? 0;
+  if ([0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
     const localV = JSON.parse(localStorage.getItem(vehicleStorageKey(company)) || "[]") as Vehicle[];
-    const localDRaw = JSON.parse(localStorage.getItem("driverList") || "[]") as Array<{ id?: string; name?: string }>;
-    setVehicles((prev) => {
+const s1 = localStorage.getItem(`driverList_${company}`);
+const s2 = localStorage.getItem("driverList"); // 互換
+const localDRaw = JSON.parse(s1 || s2 || "[]") as Array<{ id?: string; name?: string }>;
+
+setVehicles((prev) => {
   const drafts = prev.filter((x) => x.id < 0);
   const lv = Array.isArray(localV) ? localV : [];
   return [...drafts, ...lv];
@@ -319,10 +378,10 @@ setDrivers(
 
   const handleAdd = () => {
     if (!company) {
-      setError("会社情報が見つかりません。");
-      return;
-    }
-    const tempId = -Date.now(); // 一時ID（負数）
+  // 会社未選択でもドラフト行は出す（保存時に会社必須チェック）
+  console.warn("company is empty; creating a draft row anyway.");
+}
+    const tempId = -(Date.now() + Math.floor(Math.random() * 1000));
     const firstDriverName = drivers[0]?.name ?? "";
     const newV: Vehicle = {
       id: tempId,
@@ -351,11 +410,13 @@ setDrivers(
     const v = vehicles.find((x) => x.id === id);
     if (!v) return;
 
-    const msg = validateVehicle(v);
-    if (msg) {
-      setError(msg);
-      return;
-    }
+    if (!v.company?.trim()) {
+    setError("会社が未確定のため保存できません。ログイン/URLの ?company=… で会社を確定してください。");
+    return;
+  }
+
+  const msg = validateVehicle(v);
+  if (msg) { setError(msg); return; }
 
     setSavingId(id);
     setError(null);
