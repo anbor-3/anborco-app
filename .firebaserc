@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "anborco-app"
-  }
+    "default": "anborco-app",
+    "prod": "anborco-app"
+  },
+  "targets": {},
+  "etags": {}
 }

@@ -1,11 +1,25 @@
+# --- dependencies / builds ---
 node_modules/
 dist/
+build/
+.vercel/
+
+# --- env files (コミット禁止) ---
 .env
+.env.*
+!.env.example   # サンプルだけは追跡OK
 
-.vercel
-# Firebase Admin の秘密鍵を除外
-serviceAccount.json
-serviceAccount.json
-anborco-app-firebase-adminsdk-*.json
+# --- Firebase Admin キー（ローカル専用）---
+/anborco-app-firebase-adminsdk-*.json
+/server/firebase-admin.json
+/server/anborco-app-firebase-adminsdk-*.json
+/serviceAccount.json
+/server/serviceAccount.json
 
-.vercel
+# --- logs / OS noise（任意）---
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.DS_Store
+Thumbs.db

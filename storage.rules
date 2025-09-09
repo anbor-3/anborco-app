@@ -1,0 +1,31 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() { return request.auth != null; }
+    function hasCompany(c) {
+      return isSignedIn()
+        && request.auth.token.company != null
+        && request.auth.token.company == c;
+    }
+
+    // 生成PDF: pdfs/{company}/{driverId}/{type}/{fileName}
+    match /pdfs/{company}/{driverId}/{type}/{fileName=**} {
+      allow read, write: if hasCompany(company);
+      allow list: if false;
+    }
+
+    // チャット画像: chat_images/{company}/{chatId}/{file}
+    // ※ chatId のメンバー判定は Storage ではできないため、同社で縛る方式に。
+    //   将来、Functions 経由の署名URL発行に切り替えると更に堅牢です。
+    match /chat_images/{company}/{chatId}/{file=**} {
+      allow read, write: if hasCompany(company);
+      allow list: if false;
+    }
+
+    // それ以外は拒否
+    match /{allPaths=**} {
+      allow read, write, list: if false;
+    }
+  }
+}

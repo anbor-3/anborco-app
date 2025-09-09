@@ -1,14 +1,18 @@
+"use client";
 // ✅ import は一番上にまとめてください
 import { useState, useEffect } from "react";
 import { getAuth } from "firebase/auth";
 
-/** ✅ 本番向け API 基点（環境変数があれば採用） */
-const RAW_BASE =
-  (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_BASE_URL)
-    ? String((import.meta as any).env.VITE_API_BASE_URL)
-    : "";
+/** ✅ 本番向け API 基点（Next.js / Vite 双方対応 & 末尾スラッシュ除去） */
+const RAW_BASE: string =
+  // Next.js
+  (((typeof process !== "undefined" ? (process as any) : undefined)?.env?.NEXT_PUBLIC_API_BASE) as string) ||
+  // Vite
+  (((typeof import.meta !== "undefined" ? (import.meta as any) : undefined)?.env?.VITE_API_BASE_URL) as string) ||
+  "";
 const API_BASE_URL = RAW_BASE.replace(/\/$/, "");
-const api = (path: string) => `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+const api = (path: string) =>
+  `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
 const debounce = <T extends (...args: any[]) => any>(fn: T, delay = 500) => {
   let t: number | undefined;
@@ -91,6 +95,38 @@ const findPlanByMaxUsers = (needed: number): Plan => {
   return pricingPlans.find(p => needed <= p.maxUsers) || pricingPlans[pricingPlans.length-1];
 };
 
+interface Notification { id: string; message: string; timestamp: string; read: boolean; }
+export interface Driver {
+  id: string; name: string; contractType: "社員"|"委託"; company: string; phone: string; address: string;
+  mail?: string; birthday: string; invoiceNo?: string;
+  licenseFiles: File[]; licenseExpiry: string; attachments: File[]; hidden: boolean;
+  status: "予定なし"|"稼働前"|"稼働中"|"休憩中"|"稼働終了";
+  isWorking: boolean; resting: boolean; shiftStart?: string; shiftEnd?: string; statusUpdatedAt?: string;
+  uid: string; loginId: string; password: string; [key: string]: any;
+}
+
+/* ======== 本番仕様：ドライバー用 Firebase Auth 発行 API 呼び出し ======== */
+const provisionDriverAuth = async (company: string, loginId: string, password: string) => {
+  const auth = getAuth();
+  const idToken = await auth.currentUser?.getIdToken();
+  const res = await fetch(api("/api/drivers/provision"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${idToken || ""}`,
+    },
+    credentials: "include",
+    body: JSON.stringify({ company, loginId, password }),
+  });
+  if (!res.ok) {
+    const err: any = new Error(`HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json() as Promise<{ uid: string; email: string }>;
+};
+
 // ✅ Firestoreからドライバー一覧を取得する関数（あとで使います）
 export const fetchDrivers = async (company: string): Promise<Driver[]> => {
   try {
@@ -99,10 +135,10 @@ export const fetchDrivers = async (company: string): Promise<Driver[]> => {
     if (!idToken) throw new Error("未ログイン");
 
     const res = await fetch(api(`/api/drivers?company=${encodeURIComponent(company)}`), {
-      headers: { Authorization: `Bearer ${idToken}` },
+      headers: { Authorization: `Bearer ${idToken}`, Accept: "application/json" },
       credentials: "include",
     });
-    if (!res.ok) throw new Error("Fetch failed");
+    if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const drivers = await res.json();
     return drivers;
   } catch (error) {
@@ -111,7 +147,7 @@ export const fetchDrivers = async (company: string): Promise<Driver[]> => {
   }
 };
 
-// ✅ Neonに保存する共通関数（Fileは送らない）
+// ✅ Neonに保存する共通関数（File/平文PWは送らない）
 const persist = async (company: string, drivers: Driver[], opts?: { silent?: boolean }) => {
   const silent = !!opts?.silent;
   const auth = getAuth();
@@ -120,7 +156,8 @@ const persist = async (company: string, drivers: Driver[], opts?: { silent?: boo
     if (!silent) alert("未ログインです。再ログインしてください。");
     throw new Error("no token");
   }
-  const sanitized = drivers.map(({ attachments, licenseFiles, ...rest }) => rest);
+  // attachments / licenseFiles / password は送らない（PWはサーバ保存禁止）
+  const sanitized = drivers.map(({ attachments, licenseFiles, password, ...rest }) => rest);
   try {
     const res = await fetch(api("/api/drivers/save"), {
       method: "POST",
@@ -136,20 +173,10 @@ const persist = async (company: string, drivers: Driver[], opts?: { silent?: boo
   }
 };
 
-interface Notification { id: string; message: string; timestamp: string; read: boolean; }
-export interface Driver {
-  id: string; name: string; contractType: "社員"|"委託"; company: string; phone: string; address: string;
-  mail?: string; birthday: string; invoiceNo?: string;
-  licenseFiles: File[]; licenseExpiry: string; attachments: File[]; hidden: boolean;
-  status: "予定なし"|"稼働前"|"稼働中"|"休憩中"|"稼働終了";
-  isWorking: boolean; resting: boolean; shiftStart?: string; shiftEnd?: string; statusUpdatedAt?: string;
-  uid: string; loginId: string; password: string; [key: string]: any;
-}
-
 const AdminDriverManager = () => {
   const persistDebounced = debounce((company: string, drivers: Driver[]) => {
-  persist(company, drivers, { silent: true });
-}, 600);
+    persist(company, drivers, { silent: true });
+  }, 600);
 
   const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
   const company = admin.company || "";
@@ -163,6 +190,17 @@ const AdminDriverManager = () => {
   const finiteMax = typeof caps.maxUsers === "number" && Number.isFinite(caps.maxUsers);
   const combinedNow = stats.adminCount + drivers.length; // 管理者 + ドライバー
   const [loaded, setLoaded] = useState(false);
+
+  // 🔽 追加：差し込み位置のモード
+  type InsertMode = 'top' | 'bottom' | 'afterSelected' | 'byLoginId';
+  const [insertMode, setInsertMode] = useState<InsertMode>('bottom');
+
+  // 再読込ヘルパ
+  const reloadFromServer = async () => {
+    const fetched = await fetchDrivers(company);
+    setDrivers(fetched);
+    setStats(prev => ({ ...prev, driverCount: fetched.length, total: prev.adminCount + fetched.length }));
+  };
 
   // 初期ロード
   useEffect(() => {
@@ -195,11 +233,12 @@ const AdminDriverManager = () => {
 
   // ★ 会社のプランを即時アップグレードして保存（API → localStorage）
   const applyPlanUpgradeNow = async (toPlan: Plan) => {
-     // 当月1日 00:00:00 を ISO に
-  const firstOfMonth = new Date();
-  firstOfMonth.setDate(1);
-  firstOfMonth.setHours(0, 0, 0, 0);
-  const firstISO = firstOfMonth.toISOString();
+    // 当月1日 00:00:00 を ISO に
+    const firstOfMonth = new Date();
+    firstOfMonth.setDate(1);
+    firstOfMonth.setHours(0, 0, 0, 0);
+    const firstISO = firstOfMonth.toISOString();
+
     // API
     try {
       const auth = getAuth();
@@ -245,10 +284,9 @@ const AdminDriverManager = () => {
     // 画面の上限状態を即時反映
     setCaps({ maxUsers: Number.isFinite(toPlan.maxUsers) ? toPlan.maxUsers : null });
 
-    // ★ 管理者へ通知を残す（画面右上の通知一覧に出ます）
-  addNotification(`プランを「${toPlan.name}」（月額 ¥${toPlan.price.toLocaleString()}）にアップグレードしました。今月分から適用されます。`);
+    // ★ 管理者へ通知を残す
+    addNotification(`プランを「${toPlan.name}」（月額 ¥${toPlan.price.toLocaleString()}）にアップグレードしました。今月分から適用されます。`);
 
-    // 通知（承認不要の確定メッセージ）
     alert(`✅ プランを「${toPlan.name}」にアップグレードしました。\n月額 ¥${toPlan.price.toLocaleString()}（当月から適用）`);
   };
 
@@ -323,6 +361,7 @@ const AdminDriverManager = () => {
     if (!window.confirm("本当にこのドライバーを削除しますか？")) return;
     const updated = [...drivers]; updated.splice(index, 1); setDrivers(updated);
     await persist(company, updated);
+    await reloadFromServer(); // ← サーバ版で確定
   };
 
   const handleChange = (index: number, field: keyof Driver, value: any) => {
@@ -330,57 +369,108 @@ const AdminDriverManager = () => {
     persistDebounced(company, updated);
   };
 
-  // ★ 追加処理を共通化（skipCheck=true で上限チェックを飛ばす）
+  // ★ 追加処理（Firebaseで発行 → uid 取得 → 行追加）— 差し込み位置対応の本番仕様
   const addDriverRow = async (skipCheck = false) => {
-  const neededTotal = stats.adminCount + drivers.length + 1;
-  if (!skipCheck && finiteMax && neededTotal > (caps.maxUsers as number)) {
-    openUpgradeFlow(neededTotal);
-    return;
-  }
+    // 直前にサーバの最新を取得して重複を避ける
+    const latest = await fetchDrivers(company);
+    const latestLoginIds = new Set(latest.map((x: Driver) => x.loginId));
+    const neededTotal = stats.adminCount + latest.length + 1;
 
-  const adminCompany = company;
-  const newIndex = drivers.length; // ← 先に確定しておく
-  const newLoginId = `driver${String(newIndex + 1).padStart(4, "0")}`;
-  const newPassword = genRandom(8);
+    if (!skipCheck && finiteMax && neededTotal > (caps.maxUsers as number)) {
+      openUpgradeFlow(neededTotal);
+      return;
+    }
 
-  const newDriver: Driver = {
-    id: `driver${String(newIndex + 1).padStart(4, "0")}`,
-    uid: `uid${Date.now()}`,
-    loginId: newLoginId,
-    password: newPassword,
-    name: "",
-    contractType: "社員",
-    invoiceNo: "",
-    company: adminCompany,
-    phone: "",
-    address: "",
-    mail: "",
-    birthday: "",
-    licenseFiles: [],
-    licenseExpiry: "",
-    attachments: [],
-    hidden: false,
-    status: "予定なし",
-    isWorking: false,
-    resting: false,
-    shiftStart: "09:00",
-    shiftEnd: "18:00",
-  };
+    // まずはシード（最新件数から driver0001… 連番）
+    let seq = latest.length + 1;
+    let loginId = `driver${String(seq).padStart(4, "0")}`;
+    while (latestLoginIds.has(loginId)) {
+      seq += 1;
+      loginId = `driver${String(seq).padStart(4, "0")}`;
+    }
 
-  setDrivers(prev => {
-    const updated = [...prev, newDriver];
-    // 追加直後は「サイレント保存 or 入力後デバウンス保存」へ
+    // Firebase発行は409（重複）に備えて最大5回リトライ（連番を+1）
+    let uid = "";
+    let password = "";
+    let attempts = 0;
+
+    while (attempts < 5) {
+      password = genRandom(8); // 表示用。保存はしない
+      try {
+        const { uid: createdUid } = await provisionDriverAuth(company, loginId, password);
+        uid = createdUid;
+        break; // 成功
+      } catch (e: any) {
+        if (e?.status === 409) {
+          // 衝突 → 末尾連番を+1して再試行
+          seq += 1;
+          loginId = `driver${String(seq).padStart(4, "0")}`;
+          attempts++;
+          continue;
+        }
+        // その他はそのままエラー
+        throw e;
+      }
+    }
+
+    if (!uid) {
+      alert("ログインIDの重複で作成できませんでした。もう一度お試しください。");
+      return;
+    }
+
+    const newDriver: Driver = {
+      id: `driver${String(seq).padStart(4, "0")}`,
+      uid,
+      loginId,
+      password, // 画面表示のみ（persist では送られない）
+      name: "",
+      contractType: "社員",
+      invoiceNo: "",
+      company,
+      phone: "",
+      address: "",
+      mail: "",
+      birthday: "",
+      licenseFiles: [],
+      licenseExpiry: "",
+      attachments: [],
+      hidden: false,
+      status: "予定なし",
+      isWorking: false,
+      resting: false,
+      shiftStart: "09:00",
+      shiftEnd: "18:00",
+    };
+
+    // === 差し込み位置モードを反映 ===
+    const base = [...drivers];
+    let updated: Driver[] = [];
+    let newRowIndex = 0;
+
+    if (insertMode === 'byLoginId') {
+      updated = [...base, newDriver].sort((a, b) => a.loginId.localeCompare(b.loginId, 'ja'));
+      newRowIndex = updated.findIndex((d) => d.uid === uid);
+    } else {
+      // デフォルトは末尾
+      let insertAt = base.length;
+      if (insertMode === 'top') insertAt = 0;
+      else if (insertMode === 'afterSelected' && expandedRowIndex !== null) {
+        insertAt = Math.min(expandedRowIndex + 1, base.length);
+      }
+      updated = [...base];
+      updated.splice(insertAt, 0, newDriver);
+      newRowIndex = insertAt;
+    }
+
+    setDrivers(updated);
     persistDebounced(company, updated);
-    return updated;
-  });
 
-  // 追加直後から即編集 & 詳細展開
-  setEditingIndex(newIndex);
-  setExpandedRowIndex(newIndex);
+    // 追加直後から即編集 & 詳細展開（差し込み位置に合わせる）
+    setEditingIndex(newRowIndex);
+    setExpandedRowIndex(newRowIndex);
 
-  // うるさい alert は出さず、右上通知に控えめに出す
-  addNotification(`ドライバー行を追加しました（ログインID: ${newLoginId} / 初期PW: ${newPassword}）`);
-};
+    addNotification(`ドライバーを追加しました（ログインID: ${loginId} / 初期PW: ${password}）`);
+  };
 
   const handleAddRow = async () => addDriverRow(false);
 
@@ -396,12 +486,14 @@ const AdminDriverManager = () => {
     if (existingFiles.length + filteredNewFiles.length > 10) { alert("最大10ファイルまで添付できます。"); return; }
     current.attachments = [...existingFiles, ...filteredNewFiles]; updated[index] = current as Driver;
     setDrivers(updated); await persist(company, updated); e.target.value = "";
+    await reloadFromServer();
   };
 
   const handleFileDelete = async (rowIndex: number, fileIndex: number) => {
     const updatedFiles = [...(drivers[rowIndex].attachments || [])]; updatedFiles.splice(fileIndex, 1);
     const updated = [...drivers]; updated[rowIndex] = { ...updated[rowIndex], attachments: updatedFiles };
     setDrivers(updated); await persist(company, updated as Driver[]);
+    await reloadFromServer();
   };
 
   const getStatusColor = (status: string) => {
@@ -418,7 +510,7 @@ const AdminDriverManager = () => {
     const base = "inline-block px-3 py-1 rounded-full font-semibold text-sm ";
     switch (ct) {
       case "社員": return { class: base + "text-white bg-green-600",  label: "社員" };
-      case "委託": return { class: base + "text-white bg-purple-600", label: "委託" };
+      case "委託": return { class: base + "text-white bg紫-600", label: "委託" }; // ここだけ意図的に色を分けるなら調整
       default:     return { class: base + "text-gray-700 bg-gray-300", label: "未設定" };
     }
   };
@@ -432,13 +524,29 @@ const AdminDriverManager = () => {
 
       <div className="flex items-center gap-4 mb-2">
         <button
-  type="button"
-  className="px-4 py-1 rounded text-white bg-blue-600 hover:bg-blue-700"
-  onClick={handleAddRow}
-  disabled={!loaded}
-  title={!loaded ? "読み込み中…" : (finiteMax ? `上限 ${caps.maxUsers} 名（管理者+ドライバー合算）` : "無制限")}>
-  ドライバー追加
-</button>
+          type="button"
+          className="px-4 py-1 rounded text-white bg-blue-600 hover:bg-blue-700"
+          onClick={handleAddRow}
+          disabled={!loaded}
+          title={!loaded ? "読み込み中…" : (finiteMax ? `上限 ${caps.maxUsers} 名（管理者+ドライバー合算）` : "無制限")}>
+          ドライバー追加
+        </button>
+
+        {/* 🔽 追加：差し込み位置セレクト */}
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-gray-600">差し込み位置</label>
+          <select
+            className="border rounded px-2 py-1 text-sm"
+            value={insertMode}
+            onChange={(e) => setInsertMode(e.target.value as InsertMode)}
+            title="新規行をどこに差し込むか選べます"
+          >
+            <option value="bottom">末尾</option>
+            <option value="top">先頭</option>
+            <option value="afterSelected">選択行の下</option>
+            <option value="byLoginId">ログインID昇順</option>
+          </select>
+        </div>
 
         <button className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-1 rounded" onClick={updateDriverStatus}>
           ステータス更新
@@ -484,23 +592,23 @@ const AdminDriverManager = () => {
                 </td>
                 <td className="border px-2 py-1 break-all">
                   <button className="bg-yellow-500 hover:bg-yellow-600 text-white px-2 py-1 rounded mr-2" onClick={() => { setEditingIndex(idx); setExpandedRowIndex(idx); }}>編集</button>
-                  <button className="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded" onClick={() => {
+                  <button className="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded" onClick={async () => {
                     if (!window.confirm("本当にこのドライバーを削除しますか？")) return;
-                    const updated = [...drivers]; updated.splice(idx, 1); setDrivers(updated); persist(company, updated);
+                    const updated = [...drivers]; updated.splice(idx, 1); setDrivers(updated); await persist(company, updated); await reloadFromServer();
                   }}>削除</button>
                 </td>
                 <td className="border px-2 py-1 break-all">{d.id}</td>
                 <td className="border px-2 py-1 break-all">
-  {editingIndex===idx ? (
-    <input
-      autoFocus
-      className="w-full text-sm"
-      placeholder="例）佐藤 太郎"
-      value={d.name}
-      onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).name=e.target.value; setDrivers(u); persistDebounced(company,u); }}
-    />
-  ) : d.name}
-</td>
+                  {editingIndex===idx ? (
+                    <input
+                      autoFocus
+                      className="w-full text-sm"
+                      placeholder="例）佐藤 太郎"
+                      value={d.name}
+                      onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).name=e.target.value; setDrivers(u); persistDebounced(company,u); }}
+                    />
+                  ) : d.name}
+                </td>
 
                 <td className="border px-2 py-1 break-all">
                   {editingIndex===idx ? (
@@ -508,7 +616,7 @@ const AdminDriverManager = () => {
                       onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).contractType=e.target.value; setDrivers(u); persistDebounced(company,u); }}>
                       <option value="社員">社員</option><option value="委託">委託</option>
                     </select>
-                  ) : <span className={`inline-block px-3 py-1 rounded-full font-semibold text-sm ${d.contractType==="社員"?"text-white bg-green-600":"text-white bg-purple-600"}`}>{d.contractType}</span>}
+                  ) : <span className={`inline-block px-3 py-1 rounded-full font-semibold text-sm ${d.contractType==="社員"?"text-white bg-green-600":"text-white bg紫-600"}`}>{d.contractType}</span>}
                 </td>
                 <td className="border px-2 py-1 break-all">
                   {editingIndex===idx ? (
@@ -528,30 +636,29 @@ const AdminDriverManager = () => {
                   {expandedRowIndex===idx && (
                     <div className="mt-2">
                       {editingIndex===idx && (<input type="file" multiple onChange={(e)=>handleFileUpload(idx, e)} className="mb-1 text-xs" />)}
-                      {/* 添付一覧も前回版のまま */}
+                      {/* 添付一覧 */}
                       <ul className="text-left text-xs mt-1">
-  {(d.attachments || []).map((file, fileIndex) => (
-    <li key={fileIndex} className="flex items-center justify-between mb-1">
-      <a
-        href={URL.createObjectURL(file)}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-blue-600 underline break-all w-40"
-      >
-        {file.name}
-      </a>
-      {editingIndex === idx && (
-        <button
-          className="text-red-600 ml-2"
-          onClick={() => handleFileDelete(idx, fileIndex)}
-        >
-          削除
-        </button>
-      )}
-    </li>
-  ))}
-</ul>
-
+                        {(d.attachments || []).map((file, fileIndex) => (
+                          <li key={fileIndex} className="flex items-center justify-between mb-1">
+                            <a
+                              href={URL.createObjectURL(file)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 underline break-all w-40"
+                            >
+                              {file.name}
+                            </a>
+                            {editingIndex === idx && (
+                              <button
+                                className="text-red-600 ml-2"
+                                onClick={() => handleFileDelete(idx, fileIndex)}
+                              >
+                                削除
+                              </button>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                 </td>

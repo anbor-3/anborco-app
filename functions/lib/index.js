@@ -32,15 +32,88 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.zipYearly = exports.driverConfirmPS = exports.generatePS = exports.generatePOs = void 0;
+exports.complianceNews = void 0;
+// functions/src/index.ts
+const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
+const rss_parser_1 = __importDefault(require("rss-parser"));
+const cors_1 = __importDefault(require("cors")); // ← default import を使用
 admin.initializeApp();
-var generatePOs_1 = require("./generatePOs");
-Object.defineProperty(exports, "generatePOs", { enumerable: true, get: function () { return generatePOs_1.generatePOs; } });
-var generatePS_1 = require("./generatePS");
-Object.defineProperty(exports, "generatePS", { enumerable: true, get: function () { return generatePS_1.generatePS; } });
-var driverConfirmPS_1 = require("./driverConfirmPS");
-Object.defineProperty(exports, "driverConfirmPS", { enumerable: true, get: function () { return driverConfirmPS_1.driverConfirmPS; } });
-var zipYearly_1 = require("./zipYearly");
-Object.defineProperty(exports, "zipYearly", { enumerable: true, get: function () { return zipYearly_1.zipYearly; } });
+// ★必要に応じて自社ドメインへ
+const ALLOWED_ORIGINS = [
+    /^https:\/\/your-prod\.example\.com$/,
+    /^http:\/\/localhost:5173$/,
+];
+// 変数名は corsMw にして予約名の衝突を回避
+const corsMw = (0, cors_1.default)({
+    origin(origin, cb) {
+        if (!origin)
+            return cb(null, true);
+        const ok = ALLOWED_ORIGINS.some((rx) => rx.test(origin));
+        cb(null, ok);
+    },
+});
+const parser = new rss_parser_1.default({
+    headers: { "User-Agent": "ComplianceNewsFetcher/1.0 (+firebase)" },
+    timeout: 15000,
+});
+// 公式フィード（必要に応じて追加）
+const FEEDS = [
+    "https://www.mlit.go.jp/pressrelease.rdf",
+    "https://www.mlit.go.jp/road/ir/ir-data/rss.xml",
+    "https://www.meti.go.jp/english/rss/index.xml",
+    "https://www.mhlw.go.jp/index.rdf",
+];
+const KEYWORDS = [
+    "運送", "物流", "トラック", "貨物", "道路運送法", "改善基準", "標準的な運賃",
+    "点呼", "アルコール", "飲酒", "労働時間", "過労", "監査", "行政処分",
+    "燃料", "軽油", "ガソリン", "税", "補助", "カーボン", "排出",
+];
+function hitKeyword(text = "", kw = KEYWORDS) {
+    const t = text.toLowerCase();
+    return kw.some((k) => t.includes(k.toLowerCase()));
+}
+exports.complianceNews = functions
+    .region("asia-northeast1")
+    .https.onRequest(async (req, res) => {
+    corsMw(req, res, async () => {
+        const limit = Math.max(1, Math.min(50, Number(req.query.limit ?? 20)));
+        const keywords = String(req.query.q || "").trim();
+        const useFilter = keywords.length > 0 || req.query.filter === "1";
+        const extraKW = keywords ? keywords.split(/[,\s]+/).filter(Boolean) : [];
+        const kwAll = extraKW.length ? [...KEYWORDS, ...extraKW] : KEYWORDS;
+        try {
+            const results = await Promise.allSettled(FEEDS.map(async (url) => {
+                const feed = await parser.parseURL(url);
+                const site = feed?.title || "RSS";
+                return (feed.items || [])
+                    .map((it) => ({
+                    title: it.title?.trim() || "",
+                    link: it.link?.trim() || "",
+                    source: site,
+                    isoDate: it.isoDate || it.pubDate || new Date().toISOString(),
+                }))
+                    .filter((n) => n.title && n.link);
+            }));
+            let items = results
+                .filter((r) => r.status === "fulfilled")
+                .flatMap((r) => r.value);
+            // link重複除去
+            const seen = new Set();
+            items = items.filter((n) => (seen.has(n.link) ? false : (seen.add(n.link), true)));
+            if (useFilter)
+                items = items.filter((n) => hitKeyword(n.title, kwAll));
+            items.sort((a, b) => new Date(b.isoDate).getTime() - new Date(a.isoDate).getTime());
+            res.set("Cache-Control", "public, max-age=300, s-maxage=600");
+            res.status(200).json({ items: items.slice(0, limit) });
+        }
+        catch (e) {
+            console.error("[complianceNews] failed", e);
+            res.status(500).json({ items: [], error: "fetch_failed" });
+        }
+    });
+});

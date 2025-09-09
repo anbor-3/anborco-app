@@ -19,11 +19,22 @@ import {
   updateDoc,
   where,
   writeBatch,
+  setDoc,
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { getDownloadURL, ref as sRef, uploadBytes } from "firebase/storage";
 
+/* ===================== Feature flag（会社間はまだ無効） ===================== */
+const ENABLE_XCOMPANY =
+  // Next.js
+  ((typeof process !== "undefined" ? (process as any) : undefined)?.env?.NEXT_PUBLIC_ENABLE_XCOMPANY === "true") ||
+  // Vite
+  ((typeof import.meta !== "undefined" ? (import.meta as any) : undefined)?.env?.VITE_ENABLE_XCOMPANY === "true") ||
+  false;
+
 /* ===================== Types ===================== */
+type ChatScope = "company" | "external"; // external は将来の会社間用（今は未使用）
+
 type Message = {
   id: string;
   sender: string;   // uid
@@ -39,7 +50,10 @@ type ChatTarget = {
   members: string[];
   isGroup: boolean;
   ownerId?: string; // グループオーナー
-  company?: string;
+  company?: string; // 会社内チャットの所属会社
+  scope?: ChatScope; // 既定は "company"
+  allowedCompanies?: string[]; // 将来の会社間用（今は ["<company>"]）
+  spaceId?: string; // 将来、マスターで束ねるスペースID
   lastReadAt?: Record<string, any>; // { uid: Timestamp }
   messages: Message[];
 };
@@ -55,10 +69,16 @@ type DirectoryUser = {
 
 /* ===================== Firestore Layout =====================
 
-users:               /users/{uid} -> { name, email, role, company, active }
-chats:               /chats/{chatId} -> { isGroup, name?, ownerId?, members[], company, lastReadAt{uid: Timestamp} }
-messages:            /chats/{chatId}/messages/{messageId}
-dm chat id:          dm_${min(uid1, uid2)}_${max(uid1, uid2)}
+users:      /users/{uid} -> { name, email, role, company, active }
+chats:      /chats/{chatId} -> {
+              isGroup, name?, ownerId?, members[], company, scope, allowedCompanies, spaceId?,
+              lastReadAt{uid: Timestamp}, createdAt
+            }
+messages:   /chats/{chatId}/messages/{messageId}
+
+DM chat id (新):
+  dm_${company}_${min(uid1, uid2)}_${max(uid1, uid2)}
+  ※ 旧: dm_${min}_${max} も読み込み時に自動移行チェック
 
 ============================================================ */
 
@@ -85,6 +105,7 @@ const ChatBox = () => {
 
   /* ---------- Directory search (DM) ---------- */
   const [queryStr, setQueryStr] = useState("");
+  thead
   const [activeIdx, setActiveIdx] = useState<number>(-1);
 
   /* ---------- Unread badge map ---------- */
@@ -107,7 +128,7 @@ const ChatBox = () => {
     return () => unsub();
   }, []);
 
-  /* ===================== Directory (users) ===================== */
+  /* ===================== Directory（社内のみ） ===================== */
   useEffect(() => {
     if (!company) return;
     const qUsers = query(
@@ -124,13 +145,14 @@ const ChatBox = () => {
     return () => unsub();
   }, [company, currentUid]);
 
-  /* ===================== Groups（自分がメンバーのもの） ===================== */
+  /* ===================== Groups（社内 & 自分がメンバー） ===================== */
   useEffect(() => {
     if (!currentUid || !company) return;
     const qGroups = query(
       collection(db, "chats"),
       where("isGroup", "==", true),
       where("company", "==", company),
+      where("scope", "==", "company"),
       where("members", "array-contains", currentUid)
     );
     const unsub = onSnapshot(qGroups, (snap) => {
@@ -143,6 +165,9 @@ const ChatBox = () => {
           isGroup: true,
           ownerId: data.ownerId,
           company: data.company,
+          scope: data.scope || "company",
+          allowedCompanies: data.allowedCompanies || [data.company],
+          spaceId: data.spaceId,
           lastReadAt: data.lastReadAt || {},
           messages: [], // 別購読
         };
@@ -152,13 +177,14 @@ const ChatBox = () => {
     return () => unsub();
   }, [currentUid, company]);
 
-  /* ===================== DMs（自分がメンバーのもの） ===================== */
+  /* ===================== DMs（社内 & 自分がメンバー） ===================== */
   useEffect(() => {
     if (!currentUid || !company) return;
     const qDMs = query(
       collection(db, "chats"),
       where("isGroup", "==", false),
       where("company", "==", company),
+      where("scope", "==", "company"),
       where("members", "array-contains", currentUid)
     );
     const unsub = onSnapshot(qDMs, (snap) => {
@@ -173,6 +199,9 @@ const ChatBox = () => {
           members: data.members || [],
           isGroup: false,
           company: data.company,
+          scope: data.scope || "company",
+          allowedCompanies: data.allowedCompanies || [data.company],
+          spaceId: data.spaceId,
           lastReadAt: data.lastReadAt || {},
           messages: [],
         };
@@ -185,6 +214,11 @@ const ChatBox = () => {
   /* ===================== Messages（選択チャット） ===================== */
   useEffect(() => {
     if (!selectedChat?.id) return;
+    // 安全：現段階は company スコープのみ許可
+    if (selectedChat.scope && selectedChat.scope !== "company" && !ENABLE_XCOMPANY) {
+      setSelectedChat(null);
+      return;
+    }
     const qMsgs = query(
       collection(db, "chats", selectedChat.id, "messages"),
       orderBy("createdAt", "asc")
@@ -212,9 +246,9 @@ const ChatBox = () => {
       }
     });
     return () => unsub();
-  }, [selectedChat?.id, currentUid]);
+  }, [selectedChat?.id, currentUid, selectedChat?.scope]);
 
-  /* ===================== 未読件数のライブ購読（全チャット） ===================== */
+  /* ===================== 未読件数（全チャット） ===================== */
   useEffect(() => {
     if (!currentUid) return;
 
@@ -225,6 +259,10 @@ const ChatBox = () => {
     }
 
     const unsubs = targets.map((chat) => {
+      // 会社外は現段階では無効
+      if (chat.scope && chat.scope !== "company" && !ENABLE_XCOMPANY) {
+        return () => {};
+      }
       const msgsCol = collection(db, "chats", chat.id, "messages");
       const last = chat.lastReadAt?.[currentUid];
       const qBase = last ? query(msgsCol, where("createdAt", ">", last)) : query(msgsCol);
@@ -248,31 +286,66 @@ const ChatBox = () => {
   /* ===================== Helpers ===================== */
   const unreadCount = (chat: ChatTarget) => unreadMap[chat.id] ?? 0;
 
-  const dmIdOf = (a: string, b: string) => (a < b ? `dm_${a}_${b}` : `dm_${b}_${a}`);
+  const dmIdLegacy = (a: string, b: string) => (a < b ? `dm_${a}_${b}` : `dm_${b}_${a}`);
+  const dmIdOf = (a: string, b: string, co: string) =>
+    (a < b ? `dm_${co}_${a}_${b}` : `dm_${co}_${b}_${a}`);
 
   const ensureDmChatAndOpen = async (partner: DirectoryUser) => {
     if (!currentUid || !company) return;
-    const id = dmIdOf(currentUid, partner.uid);
-    const chatRef = doc(db, "chats", id);
-    const snap = await getDoc(chatRef);
-    if (!snap.exists()) {
-      await updateDoc(chatRef, {} as any).catch(async () => {
-        // setDoc で新規作成
-        await (await import("firebase/firestore")).setDoc(chatRef, {
+
+    const idNew = dmIdOf(currentUid, partner.uid, company);
+    const idOld = dmIdLegacy(currentUid, partner.uid);
+    const chatRefNew = doc(db, "chats", idNew);
+    const chatRefOld = doc(db, "chats", idOld);
+
+    const snapNew = await getDoc(chatRefNew);
+    if (!snapNew.exists()) {
+      const snapOld = await getDoc(chatRefOld);
+      if (snapOld.exists()) {
+        // 旧IDが存在 → 会社情報・スコープを整備（安全な範囲で）
+        try {
+          await updateDoc(chatRefOld, {
+            company,
+            scope: "company",
+            allowedCompanies: [company],
+          });
+        } catch {}
+        const data: any = snapOld.data() || {};
+        setSelectedChat({
+          id: idOld,
+          name: partner.name,
+          members: data.members || [currentUid, partner.uid],
           isGroup: false,
-          members: [currentUid, partner.uid],
           company,
-          lastReadAt: { [currentUid]: serverTimestamp() },
-          createdAt: serverTimestamp(),
+          scope: "company",
+          allowedCompanies: [company],
+          spaceId: data.spaceId,
+          lastReadAt: data.lastReadAt || {},
+          messages: [],
         });
+        return;
+      }
+
+      // 新規作成（会社スコープ）
+      await setDoc(chatRefNew, {
+        isGroup: false,
+        members: [currentUid, partner.uid],
+        company,
+        scope: "company",
+        allowedCompanies: [company],
+        lastReadAt: { [currentUid]: serverTimestamp() },
+        createdAt: serverTimestamp(),
       });
     }
+
     setSelectedChat({
-      id,
+      id: idNew,
       name: partner.name,
       members: [currentUid, partner.uid],
       isGroup: false,
       company,
+      scope: "company",
+      allowedCompanies: [company],
       lastReadAt: {},
       messages: [],
     });
@@ -306,6 +379,8 @@ const ChatBox = () => {
       ownerId: currentUid,
       members: [currentUid],
       company,
+      scope: "company",            // ★ 社内限定
+      allowedCompanies: [company], // ★ 将来の会社間用フィールド
       lastReadAt: { [currentUid]: serverTimestamp() },
       createdAt: serverTimestamp(),
     });
@@ -316,6 +391,8 @@ const ChatBox = () => {
       isGroup: true,
       ownerId: currentUid,
       company,
+      scope: "company",
+      allowedCompanies: [company],
       lastReadAt: {},
       messages: [],
     });
@@ -365,6 +442,9 @@ const ChatBox = () => {
 
   /* ===================== Open chat ===================== */
   const openChat = async (chat: ChatTarget) => {
+    // 現段階は社内スコープのみ
+    if (chat.scope && chat.scope !== "company" && !ENABLE_XCOMPANY) return;
+
     if (currentUid) {
       updateDoc(doc(db, "chats", chat.id), {
         [`lastReadAt.${currentUid}`]: serverTimestamp(),
@@ -377,9 +457,16 @@ const ChatBox = () => {
   const sendMessage = async () => {
     if (!selectedChat || (!newMessage.trim() && !file) || !currentUid) return;
 
+    // スコープ/メンバー確認（保険）
+    if ((selectedChat.scope && selectedChat.scope !== "company" && !ENABLE_XCOMPANY) ||
+        !selectedChat.members.includes(currentUid)) {
+      alert("このチャットには投稿できません。");
+      return;
+    }
+
     let imageUrl: string | null = null;
     if (file) {
-      const objectPath = `chat_images/${selectedChat.id}/${Date.now()}_${file.name}`;
+      const objectPath = `chat_images/${company}/${selectedChat.id}/${Date.now()}_${file.name}`;
       const snap = await uploadBytes(sRef(storage, objectPath), file);
       imageUrl = await getDownloadURL(snap.ref);
     }
@@ -429,7 +516,9 @@ const ChatBox = () => {
         {/* Header + Search */}
         <div className="sticky top-0 z-10 bg-zinc-900 p-4 border-b border-zinc-700 space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold">チャット</h2>
+            <h2 className="text-xl font-bold">
+              チャット <span className="text-sm text-zinc-400">-Chat-</span>
+            </h2>
             <button
               onClick={createGroup}
               className="rounded bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 text-sm font-medium"
@@ -560,7 +649,7 @@ const ChatBox = () => {
                 {selectedChat.isGroup ? "グループチャット" : "個人チャット"}
               </p>
 
-              {/* 参加メンバーのバッジ（グループのみ） */}
+              {/* メンバーバッジ（グループのみ） */}
               {selectedChat.isGroup && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {selectedChat.members.map((uid) => (
@@ -610,7 +699,7 @@ const ChatBox = () => {
                 </button>
               )}
 
-              {/* 退出（オーナーは削除運用／メンバーは離脱） */}
+              {/* 退出（オーナーは削除／メンバーは離脱） */}
               {selectedChat.isGroup && (
                 <button
                   onClick={leaveGroup}

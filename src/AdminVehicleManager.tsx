@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { getAuth } from "firebase/auth";
 
 /* ========================= Types ========================= */
 
@@ -28,18 +29,6 @@ type Vehicle = {
 
 type Driver = { id: string; name: string };
 
-/* ========================= API helpers =========================
-   ※ エンドポイントはプロジェクトに合わせて調整してください。
-   - vehicles:
-       GET  /api/vehicles?company=XXX                -> Vehicle[]
-       POST /api/vehicles                            -> Vehicle   (新規)
-       PUT  /api/vehicles/:id                        -> Vehicle   (更新)
-       DELETE /api/vehicles/:id
-   - drivers:
-       GET  /api/drivers?company=XXX                 -> { id,name }[]
-   - uploads:
-       POST /api/vehicles/:id/attachments (FormData) -> Attachment[]
-*/
 /* ========================= API helpers（差し替え版） =========================
    .env で API ベース URL を切り替えできます。
    - Vite:           VITE_API_BASE_URL=https://api.example.com
@@ -72,7 +61,6 @@ async function apiJSON<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
-    // エラー本文も拾う（HTMLが返ってきた場合の原因確認用）
     const text = await res.text().catch(() => "");
     const err: any = new Error(`HTTP ${res.status} at ${url}\n${text.slice(0, 200)}`);
     err.status = res.status;
@@ -92,8 +80,6 @@ async function apiJSON<T>(path: string, init?: RequestInit): Promise<T> {
 
   return res.json();
 }
-
-import { getAuth } from "firebase/auth";
 
 const VehiclesAPI = {
   list: async (company: string) => {
@@ -146,6 +132,15 @@ const VehiclesAPI = {
       body: fd,
     });
   },
+
+  /** 任意: サーバ側が対応していれば利用（存在しない場合はクライアント更新にフォールバック） */
+  deleteAttachment: async (id: number, name: string) => {
+    const idToken = await getAuth().currentUser?.getIdToken?.();
+    return apiJSON<{ ok: true }>(`/api/vehicles/${id}/attachments?name=${encodeURIComponent(name)}`, {
+      method: "DELETE",
+      headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
+    });
+  },
 };
 
 const DriversAPI = {
@@ -178,64 +173,64 @@ function validateVehicle(v: Vehicle): string | null {
   return null;
 }
 const vehicleStorageKey = (company: string) => `vehicleList_${company}`;
+
 /* ========================= Component ========================= */
 
 const VehicleManager: React.FC = () => {
   // ▼ company を state 化し、できる限り多くのソースから解決
-const [company, setCompany] = React.useState<string>("");
+  const [company, setCompany] = React.useState<string>("");
 
-// 同期的にとれるものは即時トライ
-function pickCompanySync(): string {
-  try {
-    const cur = JSON.parse(localStorage.getItem("currentUser") || "{}");
-    if (cur?.company) return String(cur.company).trim();
-  } catch {}
-  try {
-    const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
-    if (admin?.company) return String(admin.company).trim();
-  } catch {}
-  const saved = (localStorage.getItem("company") || "").trim();
-  if (saved) return saved;
-  try {
-    const qs = new URLSearchParams(window.location.search).get("company");
-    if (qs) return qs.trim();
-  } catch {}
-  return "";
-}
-
-React.useEffect(() => {
-  // まずは同期的な候補
-  const first = pickCompanySync();
-  if (first) {
-    setCompany(first);
-    localStorage.setItem("company", first);
-    return;
+  // 同期的にとれるものは即時トライ
+  function pickCompanySync(): string {
+    try {
+      const cur = JSON.parse(localStorage.getItem("currentUser") || "{}");
+      if (cur?.company) return String(cur.company).trim();
+    } catch {}
+    try {
+      const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
+      if (admin?.company) return String(admin.company).trim();
+    } catch {}
+    const saved = (localStorage.getItem("company") || "").trim();
+    if (saved) return saved;
+    try {
+      const qs = new URLSearchParams(window.location.search).get("company");
+      if (qs) return qs.trim();
+    } catch {}
+    return "";
   }
 
-  // 非同期の候補（Firebase クレーム / /api/me）
-  (async () => {
-    try {
-      const auth = (await import("firebase/auth")).getAuth();
-      const result = await auth.currentUser?.getIdTokenResult?.();
-      const claim = (result?.claims as any)?.company;
-      if (claim) {
-        setCompany(String(claim));
-        localStorage.setItem("company", String(claim));
-        return;
-      }
-    } catch {}
+  React.useEffect(() => {
+    // まずは同期的な候補
+    const first = pickCompanySync();
+    if (first) {
+      setCompany(first);
+      localStorage.setItem("company", first);
+      return;
+    }
 
-    try {
-      // 任意: /api/me がある場合のみ
-      const me = await apiJSON<{ company?: string }>("/api/me").catch(() => null);
-      if (me?.company) {
-        setCompany(String(me.company));
-        localStorage.setItem("company", String(me.company));
-        return;
-      }
-    } catch {}
-  })();
-}, []);
+    // 非同期の候補（Firebase クレーム / /api/me）
+    (async () => {
+      try {
+        const result = await getAuth().currentUser?.getIdTokenResult?.();
+        const claim = (result?.claims as any)?.company;
+        if (claim) {
+          setCompany(String(claim));
+          localStorage.setItem("company", String(claim));
+          return;
+        }
+      } catch {}
+
+      try {
+        // 任意: /api/me がある場合のみ
+        const me = await apiJSON<{ company?: string }>("/api/me").catch(() => null as any);
+        if (me?.company) {
+          setCompany(String(me.company));
+          localStorage.setItem("company", String(me.company));
+          return;
+        }
+      } catch {}
+    })();
+  }, []);
 
   const [vehicles, setVehicles] = React.useState<Vehicle[]>([]);
   const [drivers, setDrivers] = React.useState<Driver[]>([]);
@@ -247,11 +242,11 @@ React.useEffect(() => {
   const [info, setInfo] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-  if (!company) return;
-  setVehicles(prev =>
-    prev.map(v => (!v.company?.trim() ? { ...v, company } : v))
-  );
-}, [company]);
+    if (!company) return;
+    setVehicles(prev =>
+      prev.map(v => (!v.company?.trim() ? { ...v, company } : v))
+    );
+  }, [company]);
 
   // カスタム項目はとりあえずローカルで管理（要件次第ではAPI化）
   React.useEffect(() => {
@@ -261,113 +256,85 @@ React.useEffect(() => {
     } catch {}
   }, []);
 
-  // 初期ロード
-
-React.useEffect(() => {
-  let aborted = false;
-  (async () => {
-    if (!company) {
-  // 会社未確定でも UI は開く（追加行は出せる）
-  setLoading(false);
-  setError(null); // ← エラーで止めない
-  return;
-}
-    setLoading(true);
-    setError(null);
-    try {
-      let vList: Vehicle[] = [];
-      let dList: Driver[] = [];
-      try {
-        // まずは API を叩く
-        [vList, dList] = await Promise.all([
-          VehiclesAPI.list(company),
-          DriversAPI.list(company),
-        ]);
-      } catch (e: any) {
-  // 404（API未配備）または 415（HTML返却などJSONでない）ならローカルへフォールバック
-  const s = e?.status ?? 0; // fetch失敗などは status 未設定なので 0 扱い
-  if ([0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
-    const localVehicles = JSON.parse(
-      localStorage.getItem(vehicleStorageKey(company)) || "[]"
-    ) as Vehicle[];
-    const s1 = localStorage.getItem(`driverList_${company}`);
-const s2 = localStorage.getItem("driverList"); // 古いキー互換
-const localDriversRaw = JSON.parse(s1 || s2 || "[]") as Array<{ id?: string; name?: string }>;
-
-    vList = Array.isArray(localVehicles) ? localVehicles : [];
-    dList = Array.isArray(localDriversRaw)
-      ? localDriversRaw
-          .filter((x) => x && x.name)
-          .map((x, i) => ({ id: x.id ?? String(i + 1), name: x.name! }))
-      : [];
-  } else {
-    throw e;
-  }
-}
-      if (!aborted) {
-  // 追加中のドラフト行（id<0）を保持したまま最新に差し替え
-  setVehicles((prev) => {
-    const drafts = prev.filter((x) => x.id < 0);
-    return [...drafts, ...(vList ?? [])];
-  });
-  setDrivers(dList ?? []);
-}
-    } catch (e: any) {
-      if (!aborted) setError(e?.message ?? "データの取得に失敗しました。");
-    } finally {
-      if (!aborted) setLoading(false);
-    }
-  })();
-  return () => { aborted = true; };
-}, [company]);
-
-  // 共有イベントで再読込（ドライバー/車両）
-  React.useEffect(() => {
+  /** ===== 共通：サーバから最新を再取得（会社スコープで共有） ===== */
+  const reloadFromServer = React.useCallback(async () => {
     if (!company) return;
-  const reload = async () => {
     try {
       const [vList, dList] = await Promise.all([
         VehiclesAPI.list(company),
         DriversAPI.list(company),
       ]);
-      setVehicles((prev) => {
-  const drafts = prev.filter((x) => x.id < 0);
-  return [...drafts, ...(vList ?? [])];
-});
-setDrivers(dList ?? []);
-   } catch (e: any) {
-  const s = e?.status ?? 0;
-  if ([0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
-    const localV = JSON.parse(localStorage.getItem(vehicleStorageKey(company)) || "[]") as Vehicle[];
-const s1 = localStorage.getItem(`driverList_${company}`);
-const s2 = localStorage.getItem("driverList"); // 互換
-const localDRaw = JSON.parse(s1 || s2 || "[]") as Array<{ id?: string; name?: string }>;
+      setVehicles(prev => {
+        const drafts = prev.filter(x => x.id < 0);
+        return [...drafts, ...(vList ?? [])];
+      });
+      setDrivers(dList ?? []);
+    } catch (e: any) {
+      const s = e?.status ?? 0;
+      if ([0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
+        const localV = JSON.parse(localStorage.getItem(vehicleStorageKey(company)) || "[]") as Vehicle[];
+        const s1 = localStorage.getItem(`driverList_${company}`);
+        const s2 = localStorage.getItem("driverList");
+        const localDRaw = JSON.parse(s1 || s2 || "[]") as Array<{ id?: string; name?: string }>;
+        setVehicles(prev => {
+          const drafts = prev.filter(x => x.id < 0);
+          const lv = Array.isArray(localV) ? localV : [];
+          return [...drafts, ...lv];
+        });
+        setDrivers(
+          Array.isArray(localDRaw)
+            ? localDRaw.filter(x => x && x.name).map((x, i) => ({ id: x.id ?? String(i + 1), name: x.name! }))
+            : []
+        );
+      } else {
+        console.error(e);
+      }
+    }
+  }, [company]);
 
-setVehicles((prev) => {
-  const drafts = prev.filter((x) => x.id < 0);
-  const lv = Array.isArray(localV) ? localV : [];
-  return [...drafts, ...lv];
-});
-setDrivers(
-  Array.isArray(localDRaw)
-    ? localDRaw.filter(x => x && x.name).map((x, i) => ({ id: x.id ?? String(i + 1), name: x.name! }))
-    : []
-);
-  } else {
-    console.error(e);
-  }
-}
-  };
+  // 初期ロード
+  React.useEffect(() => {
+    let aborted = false;
+    (async () => {
+      if (!company) {
+        setLoading(false);
+        setError(null);
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        await reloadFromServer();
+      } catch (e: any) {
+        if (!aborted) setError(e?.message ?? "データの取得に失敗しました。");
+      } finally {
+        if (!aborted) setLoading(false);
+      }
+    })();
+    return () => { aborted = true; };
+  }, [company, reloadFromServer]);
 
-  const onDriversChanged = () => reload();
-  const onVehiclesChanged = () => reload();
-  window.addEventListener("drivers:changed", onDriversChanged);
-  window.addEventListener("vehicles:changed", onVehiclesChanged);
-  return () => {
-    window.removeEventListener("drivers:changed", onDriversChanged);
-    window.removeEventListener("vehicles:changed", onVehiclesChanged);
-  };
-}, [company]);
+  // 共有イベント・フォーカスで再読込（他端末の更新を取り込む）
+  React.useEffect(() => {
+    if (!company) return;
+    const reload = () => reloadFromServer();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") reload();
+    };
+
+    window.addEventListener("drivers:changed", reload);
+    window.addEventListener("vehicles:changed", reload);
+    window.addEventListener("focus", reload);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      window.removeEventListener("drivers:changed", reload);
+      window.removeEventListener("vehicles:changed", reload);
+      window.removeEventListener("focus", reload);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [company, reloadFromServer]);
 
   // 行の編集用に、表示値を直接 state に持たせる（簡易版）
   const patchVehicle = (id: number, patch: Partial<Vehicle>) => {
@@ -378,9 +345,8 @@ setDrivers(
 
   const handleAdd = () => {
     if (!company) {
-  // 会社未選択でもドラフト行は出す（保存時に会社必須チェック）
-  console.warn("company is empty; creating a draft row anyway.");
-}
+      console.warn("company is empty; creating a draft row anyway.");
+    }
     const tempId = -(Date.now() + Math.floor(Math.random() * 1000));
     const firstDriverName = drivers[0]?.name ?? "";
     const newV: Vehicle = {
@@ -400,6 +366,7 @@ setDrivers(
         return acc;
       }, {}),
     };
+    // 先頭に差し込み（要件に応じて末尾などに変えられます）
     setVehicles((prev) => [newV, ...prev]);
     setEditingId(tempId);
     setInfo(null);
@@ -411,12 +378,12 @@ setDrivers(
     if (!v) return;
 
     if (!v.company?.trim()) {
-    setError("会社が未確定のため保存できません。ログイン/URLの ?company=… で会社を確定してください。");
-    return;
-  }
+      setError("会社が未確定のため保存できません。ログイン/URLの ?company=… で会社を確定してください。");
+      return;
+    }
 
-  const msg = validateVehicle(v);
-  if (msg) { setError(msg); return; }
+    const msg = validateVehicle(v);
+    if (msg) { setError(msg); return; }
 
     setSavingId(id);
     setError(null);
@@ -439,9 +406,9 @@ setDrivers(
           customFields: v.customFields ?? {},
         };
         const created = await VehiclesAPI.create(payload);
-        setVehicles((prev) =>
-          prev.map((x) => (x.id === id ? { ...created } : x))
-        );
+        // 一旦楽観反映 → 直後にサーバから再取得（ID採番や補正を取り込む）
+        setVehicles((prev) => prev.map((x) => (x.id === id ? { ...created } : x)));
+        await reloadFromServer();
       } else {
         // 既存更新
         const payload: Partial<Vehicle> = {
@@ -456,31 +423,30 @@ setDrivers(
           customFields: v.customFields ?? {},
         };
         const updated = await VehiclesAPI.update(id, payload);
-        setVehicles((prev) =>
-          prev.map((x) => (x.id === id ? { ...x, ...updated } : x))
-        );
+        setVehicles((prev) => prev.map((x) => (x.id === id ? { ...x, ...updated } : x)));
+        await reloadFromServer();
       }
       setEditingId(null);
       setInfo("保存しました。");
       window.dispatchEvent(new Event("vehicles:changed"));
     } catch (e: any) {
-  if (e?.status === 404) {
-    // ◆ ローカル保存で代替：新規は負IDを正に、既存は上書き
-    const current = vehicles.find((x) => x.id === id)!;
-    const normalizedId = id < 0 ? Math.abs(id) : id;
-    const next = vehicles.map((x) =>
-      x.id === id ? { ...current, id: normalizedId } : x
-    );
-    localStorage.setItem(vehicleStorageKey(company), JSON.stringify(next));
-    setVehicles(next);
-    setEditingId(null);
-    setInfo("（ローカルに）保存しました。");
-  } else {
-    setError(e?.message ?? "保存に失敗しました。");
-  }
-} finally {
-  setSavingId(null);
-}
+      if (e?.status === 404) {
+        // ◆ ローカル保存で代替：新規は負IDを正に、既存は上書き
+        const current = vehicles.find((x) => x.id === id)!;
+        const normalizedId = id < 0 ? Math.abs(id) : id;
+        const next = vehicles.map((x) =>
+          x.id === id ? { ...current, id: normalizedId } : x
+        );
+        localStorage.setItem(vehicleStorageKey(company), JSON.stringify(next));
+        setVehicles(next);
+        setEditingId(null);
+        setInfo("（ローカルに）保存しました。");
+      } else {
+        setError(e?.message ?? "保存に失敗しました。");
+      }
+    } finally {
+      setSavingId(null);
+    }
   };
 
   const handleDelete = async (id: number) => {
@@ -490,29 +456,29 @@ setDrivers(
     if (!window.confirm("本当に削除しますか？")) return;
 
     try {
-  if (id > 0) {
-  await VehiclesAPI.remove(id);
-}
-setVehicles((prev) => {
-  const next = prev.filter((x) => x.id !== id);
-  localStorage.setItem(vehicleStorageKey(company), JSON.stringify(next));
-  return next;
-});
-  setInfo("削除しました。");
-  window.dispatchEvent(new Event("vehicles:changed"));
-} catch (e: any) {
-  if (e?.status === 404) {
-    // ◆ サーバ未実装時でもローカルの見た目を揃える
-    setVehicles((prev) => {
-  const next = prev.filter((x) => x.id !== id);
-  localStorage.setItem(vehicleStorageKey(company), JSON.stringify(next));
-  return next;
-});
-    setInfo("（ローカルで）削除しました。");
-  } else {
-    setError(e?.message ?? "削除に失敗しました。");
-  }
-}
+      if (id > 0) {
+        await VehiclesAPI.remove(id);
+      }
+      setVehicles((prev) => {
+        const next = prev.filter((x) => x.id !== id);
+        localStorage.setItem(vehicleStorageKey(company), JSON.stringify(next));
+        return next;
+      });
+      setInfo("削除しました。");
+      window.dispatchEvent(new Event("vehicles:changed"));
+      await reloadFromServer(); // ← 他端末の同期も意識して最新化
+    } catch (e: any) {
+      if (e?.status === 404) {
+        setVehicles((prev) => {
+          const next = prev.filter((x) => x.id !== id);
+          localStorage.setItem(vehicleStorageKey(company), JSON.stringify(next));
+          return next;
+        });
+        setInfo("（ローカルで）削除しました。");
+      } else {
+        setError(e?.message ?? "削除に失敗しました。");
+      }
+    }
   };
 
   const handleFiles = async (id: number, files: FileList | null) => {
@@ -523,11 +489,8 @@ setVehicles((prev) => {
     }
     try {
       const list = Array.from(files).slice(0, 10);
-      const uploaded = await VehiclesAPI.uploadAttachments(id, list);
-      // 追記
-      setVehicles((prev) =>
-        prev.map((v) => (v.id === id ? { ...v, attachments: [...(v.attachments || []), ...uploaded] } : v))
-      );
+      await VehiclesAPI.uploadAttachments(id, list);
+      await reloadFromServer(); // ← サーバが付与するURL/メタデータを取り込み直す
       setInfo("ファイルをアップロードしました。");
       window.dispatchEvent(new Event("vehicles:changed"));
     } catch (e: any) {
@@ -541,19 +504,28 @@ setVehicles((prev) => {
   };
 
   const removeAttachment = async (vehicleId: number, index: number) => {
-    // ここはAPI仕様に合わせて、DELETE /api/vehicles/:id/attachments?name=... などに変更してください
+    const v = vehicles.find((x) => x.id === vehicleId);
+    const att = v?.attachments?.[index];
+    if (!att) return;
+
     if (!window.confirm("このファイルを削除しますか？")) return;
     try {
-      // 仮でクライアント側だけ更新（実際はサーバ側も削除する）
+      // サーバAPIがあるなら先にサーバ削除（存在しない場合は 404 などでフォールバック）
+      try {
+        await VehiclesAPI.deleteAttachment(vehicleId, att.name);
+      } catch {}
+
+      // クライアント側も更新
       setVehicles((prev) =>
-        prev.map((v) =>
-          v.id === vehicleId
-            ? { ...v, attachments: v.attachments.filter((_, i) => i !== index) }
-            : v
+        prev.map((vv) =>
+          vv.id === vehicleId
+            ? { ...vv, attachments: vv.attachments.filter((_, i) => i !== index) }
+            : vv
         )
       );
       setInfo("ファイルを削除しました。");
       window.dispatchEvent(new Event("vehicles:changed"));
+      await reloadFromServer();
     } catch (e: any) {
       setError(e?.message ?? "ファイル削除に失敗しました。");
     }
@@ -574,12 +546,12 @@ setVehicles((prev) => {
       {info && <div className="mb-4 p-3 rounded bg-green-50 text-green-700 text-sm">{info}</div>}
 
       <button
-  type="button"
-  className="mb-6 w-48 py-3 bg-blue-600 text-white rounded text-lg font-semibold hover:bg-blue-700 disabled:opacity-60"
-  onClick={handleAdd}
->
-  車両追加
-</button>
+        type="button"
+        className="mb-6 w-48 py-3 bg-blue-600 text-white rounded text-lg font-semibold hover:bg-blue-700 disabled:opacity-60"
+        onClick={handleAdd}
+      >
+        車両追加
+      </button>
 
       <div className="w-full flex-1 overflow-auto">
         <table className="w-full table-auto border border-gray-300 shadow rounded-lg text-sm">
@@ -620,7 +592,6 @@ setVehicles((prev) => {
                           className="bg-gray-500 text-white px-2 py-1 rounded"
                           disabled={isSaving}
                           onClick={() => {
-                            // 新規で空行なら破棄
                             if (v.id < 0 && !v.type && !v.number && !v.vin) {
                               setVehicles((prev) => prev.filter((x) => x.id !== v.id));
                             }
@@ -653,11 +624,11 @@ setVehicles((prev) => {
                   <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
                     {isEditing ? (
                       <input
-  autoFocus
-  className="w-full px-2 py-1 border rounded"
-  value={v.type}
-  onChange={(e) => patchVehicle(v.id, { type: e.target.value })}
-/>
+                        autoFocus
+                        className="w-full px-2 py-1 border rounded"
+                        value={v.type}
+                        onChange={(e) => patchVehicle(v.id, { type: e.target.value })}
+                      />
                     ) : (
                       v.type || "-"
                     )}
@@ -693,17 +664,17 @@ setVehicles((prev) => {
                   <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
                     {isEditing ? (
                       <select
-  className="w-full px-2 py-1 border rounded"
-  value={v.user}
-  onChange={(e) => patchVehicle(v.id, { user: e.target.value })}
->
-  <option value="">—選択—</option>
-  {driverOptions.map((name) => (
-    <option key={name} value={name}>
-      {name}
-    </option>
-  ))}
-</select>
+                        className="w-full px-2 py-1 border rounded"
+                        value={v.user}
+                        onChange={(e) => patchVehicle(v.id, { user: e.target.value })}
+                      >
+                        <option value="">—選択—</option>
+                        {driverOptions.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
                     ) : (
                       v.user || "-"
                     )}
@@ -737,7 +708,7 @@ setVehicles((prev) => {
                     )}
                   </td>
 
-                  {/* 自賠責（※元コードの誤バインドを修正） */}
+                  {/* 自賠責 */}
                   <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
                     {isEditing ? (
                       <input
@@ -751,7 +722,7 @@ setVehicles((prev) => {
                     )}
                   </td>
 
-                  {/* 任意保険（※元コードの誤バインドを修正） */}
+                  {/* 任意保険 */}
                   <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
                     {isEditing ? (
                       <input

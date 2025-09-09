@@ -99,11 +99,10 @@ function AppLayout() {
               <Route path="daily-report" element={<AdminDailyReport />} />
               <Route path="drivers" element={<AdminDriverManager />} />
               <Route path="vehicles" element={<AdminVehicleManager />} />
-              <Route path="project-list" element={<AdminProjectList />} />
               <Route path="projects" element={<AdminProjectList />} />
               <Route path="map" element={<AdminLiveMap />} />
               <Route path="files" element={<AdminFileManager />} />
-              <Route path="/admin/driver-payment" element={<DriverPaymentSummary />} />
+              <Route path="driver-payment" element={<DriverPaymentSummary />} />
               <Route path="todo" element={<AdminTodoTasks />} />
               <Route path="system-settings" element={<AdminSystemSettings />} />
               <Route path="password-change" element={<AdminPasswordChange />} />
