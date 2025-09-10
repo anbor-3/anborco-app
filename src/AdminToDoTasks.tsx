@@ -16,6 +16,7 @@ import {
 import { onAuthStateChanged } from "firebase/auth";
 import { CheckCircle, Clock4, RotateCw, Trash2, Plus, ShieldCheck } from "lucide-react";
 import { auth, db } from "./firebaseClient";
+import { NEWS_API } from "./utils/news";
 
 /* ===================== Types ===================== */
 type NewsItem = { title: string; link: string; source: string; isoDate: string };
@@ -71,8 +72,6 @@ function writeNewsCache(items: NewsItem[]) {
   } catch {}
 }
 
-const API_BASE = import.meta.env.DEV ? "http://localhost:4000" : "";
-
 /* ===================== Utils ===================== */
 const fmtDate = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -117,14 +116,15 @@ export default function AdminToDoTasks() {
       day: "2-digit",
     });
 
-    const NEWS_API = import.meta.env.VITE_NEWS_API_URL;
-
   const loadNews = useCallback(async () => {
     setVisible(VISIBLE_DEFAULT);
     setLoading(true);
     setErr(null);
     try {
-      const r = await fetch(`${API_BASE}/api/compliance-news?force=1`, { cache: "no-store" });
+      const r = await fetch(`${NEWS_API}?filter=1&limit=20`, {
+        cache: "no-store",
+        mode: "cors",
+      });
       if (!r.ok) throw new Error(String(r.status));
       const j = await r.json();
       const items: NewsItem[] = (j.items || []).map((n: any) => ({

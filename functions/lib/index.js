@@ -37,20 +37,17 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.complianceNews = void 0;
-// functions/src/index.ts
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const rss_parser_1 = __importDefault(require("rss-parser"));
-const cors_1 = __importDefault(require("cors")); // ← default import を使用
+const cors_1 = __importDefault(require("cors"));
 admin.initializeApp();
-// ★必要に応じて自社ドメインへ
 const ALLOWED_ORIGINS = [
-    /^https:\/\/your-prod\.example\.com$/,
+    /^https:\/\/app\.anbor\.co\.jp$/,
     /^http:\/\/localhost:5173$/,
 ];
-// 変数名は corsMw にして予約名の衝突を回避
 const corsMw = (0, cors_1.default)({
-    origin(origin, cb) {
+    origin: (origin, cb) => {
         if (!origin)
             return cb(null, true);
         const ok = ALLOWED_ORIGINS.some((rx) => rx.test(origin));
@@ -61,7 +58,6 @@ const parser = new rss_parser_1.default({
     headers: { "User-Agent": "ComplianceNewsFetcher/1.0 (+firebase)" },
     timeout: 15000,
 });
-// 公式フィード（必要に応じて追加）
 const FEEDS = [
     "https://www.mlit.go.jp/pressrelease.rdf",
     "https://www.mlit.go.jp/road/ir/ir-data/rss.xml",
@@ -80,7 +76,8 @@ function hitKeyword(text = "", kw = KEYWORDS) {
 exports.complianceNews = functions
     .region("asia-northeast1")
     .https.onRequest(async (req, res) => {
-    corsMw(req, res, async () => {
+    // ← return を付けて CORS の完了を呼び出し側に返す
+    return corsMw(req, res, async () => {
         const limit = Math.max(1, Math.min(50, Number(req.query.limit ?? 20)));
         const keywords = String(req.query.q || "").trim();
         const useFilter = keywords.length > 0 || req.query.filter === "1";
@@ -102,7 +99,6 @@ exports.complianceNews = functions
             let items = results
                 .filter((r) => r.status === "fulfilled")
                 .flatMap((r) => r.value);
-            // link重複除去
             const seen = new Set();
             items = items.filter((n) => (seen.has(n.link) ? false : (seen.add(n.link), true)));
             if (useFilter)
