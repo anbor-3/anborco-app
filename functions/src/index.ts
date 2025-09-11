@@ -1,3 +1,4 @@
+// functions/src/index.ts
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import Parser from "rss-parser";
@@ -5,18 +6,33 @@ import cors from "cors";
 
 admin.initializeApp();
 
+/** 許可ドメイン（CORS） */
 const ALLOWED_ORIGINS = [
   /^https:\/\/app\.anbor\.co\.jp$/,
+  /^https:\/\/anborco-app\.web\.app$/,
+  /^https:\/\/anborco-app\.firebaseapp\.com$/,
   /^http:\/\/localhost:5173$/,
 ];
 
 const corsMw = cors({
-  origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
-    if (!origin) return cb(null, true);
+  origin(origin, cb) {
+    if (!origin) return cb(null, true); // curl 等は Origin なし
     const ok = ALLOWED_ORIGINS.some((rx) => rx.test(origin));
     cb(null, ok);
   },
 });
+
+/** Firebase Auth の ID トークン検証 */
+async function verifyFirebaseAuth(req: functions.Request) {
+  const h = req.headers.authorization || "";
+  const m = h.match(/^Bearer (.+)$/i);
+  if (!m) return null;
+  try {
+    return await admin.auth().verifyIdToken(m[1], true);
+  } catch {
+    return null;
+  }
+}
 
 type FeedItem = { title?: string; link?: string; isoDate?: string; pubDate?: string };
 
@@ -38,16 +54,20 @@ const KEYWORDS = [
   "燃料","軽油","ガソリン","税","補助","カーボン","排出",
 ];
 
-function hitKeyword(text = "", kw = KEYWORDS) {
-  const t = text.toLowerCase();
-  return kw.some((k) => t.includes(k.toLowerCase()));
-}
+const hitKeyword = (text = "", kw = KEYWORDS) =>
+  kw.some((k) => text.toLowerCase().includes(k.toLowerCase()));
 
 export const complianceNews = functions
   .region("asia-northeast1")
   .https.onRequest(async (req, res) => {
-    // ← return を付けて CORS の完了を呼び出し側に返す
-    return corsMw(req, res, async () => {
+    corsMw(req, res, async () => {
+      if (req.method === "OPTIONS") return res.status(204).end();
+      if (req.method !== "GET") return res.status(405).end();
+
+      // ★認証必須（未ログインは 401）
+      const user = await verifyFirebaseAuth(req);
+      if (!user) return res.status(401).json({ error: "unauthenticated" });
+
       const limit = Math.max(1, Math.min(50, Number(req.query.limit ?? 20)));
       const keywords = String(req.query.q || "").trim();
       const useFilter = keywords.length > 0 || req.query.filter === "1";
@@ -74,6 +94,7 @@ export const complianceNews = functions
           .filter((r): r is PromiseFulfilledResult<any[]> => r.status === "fulfilled")
           .flatMap((r) => r.value);
 
+        // 重複除去
         const seen = new Set<string>();
         items = items.filter((n) => (seen.has(n.link) ? false : (seen.add(n.link), true)));
 

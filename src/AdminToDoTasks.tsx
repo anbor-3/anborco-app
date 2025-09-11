@@ -16,7 +16,7 @@ import {
 import { onAuthStateChanged } from "firebase/auth";
 import { CheckCircle, Clock4, RotateCw, Trash2, Plus, ShieldCheck } from "lucide-react";
 import { auth, db } from "./firebaseClient";
-import { NEWS_API } from "./utils/news";
+import { fetchComplianceNews } from "@/utils/news";
 
 /* ===================== Types ===================== */
 type NewsItem = { title: string; link: string; source: string; isoDate: string };
@@ -121,18 +121,7 @@ export default function AdminToDoTasks() {
     setLoading(true);
     setErr(null);
     try {
-      const r = await fetch(`${NEWS_API}?filter=1&limit=20`, {
-        cache: "no-store",
-        mode: "cors",
-      });
-      if (!r.ok) throw new Error(String(r.status));
-      const j = await r.json();
-      const items: NewsItem[] = (j.items || []).map((n: any) => ({
-        title: n.title,
-        link: n.link,
-        source: n.source,
-        isoDate: n.isoDate,
-      }));
+      const items = await fetchComplianceNews({ filter: true, limit: 20 });
       setAllNews(items);
       writeNewsCache(items);
     } catch (e) {
