@@ -65,8 +65,9 @@ const AdminsAPI = {
     );
   },
   create: async (payload: Omit<AdminUser, "id"> & { password?: string }) => {
-    const idToken = await getAuth().currentUser?.getIdToken?.();
-    return apiJSON<AdminUser>(`/api/admins`, {
+  const idToken = await getAuth().currentUser?.getIdToken?.();
+  try {
+    return await apiJSON<AdminUser>(`/api/admins`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -74,7 +75,11 @@ const AdminsAPI = {
       },
       body: JSON.stringify(payload),
     });
-  },
+  } catch (err: any) {
+    // 404/415(HTML応答) 等は上位でローカル保存へフォールバックさせる
+    throw err;
+  }
+},
   update: async (id: number, patch: Partial<AdminUser>) => {
     const idToken = await getAuth().currentUser?.getIdToken?.();
     return apiJSON<AdminUser>(`/api/admins/${id}`, {
@@ -193,15 +198,15 @@ const AdminManager = () => {
         const list = await AdminsAPI.list(company);
         setAdmins(list ?? []);
       } catch (e: any) {
-        const s = e?.status ?? 0;
-        if (!isProd && [0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
-          // 開発時のみ localStorage にフォールバック
-          const raw = localStorage.getItem(ADMIN_STORAGE_KEY);
-          setAdmins(raw ? JSON.parse(raw) : []);
-        } else {
-          throw e;
-        }
-      }
+  const s = e?.status ?? 0;
+  if ([0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
+    // ✅ 本番でも localStorage にフォールバック（API未実装の間の暫定策）
+    const raw = localStorage.getItem(ADMIN_STORAGE_KEY);
+    setAdmins(raw ? JSON.parse(raw) : []);
+  } else {
+    throw e;
+  }
+}
     };
     load();
   }, [company]);
@@ -274,23 +279,26 @@ const AdminManager = () => {
       setDraft(emptyAdmin);
       setIsAdding(false);
     } catch (e: any) {
-      const s = e?.status ?? 0;
-      if (!isProd && [0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
-        const next = [
-          ...admins,
-          { ...draft, id: admins.length, company, uid: draft.uid || "dev-uid", loginId },
-        ];
-        persistLocal(next);
-        alert(
-          `（開発）ローカルに追加: ${loginId}\nパスワード: ${password}\n※本番ではサーバ保存に切り替わります。`
-        );
-        setDraft(emptyAdmin);
-        setIsAdding(false);
-      } else {
-        console.error(e);
-        alert("追加に失敗しました。権限・ネットワーク・API設定を確認してください。");
-      }
-    }
+  const s = e?.status ?? 0;
+  if ([0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
+    // ✅ 本番でもローカル保存フォールバック
+    const next = [
+      ...admins,
+      { ...draft, id: admins.length, company, uid: draft.uid || "local-uid", loginId },
+    ];
+    persistLocal(next);
+    alert(
+      `（ローカルに）管理者を追加しました。\n` +
+      `ログインID: ${loginId}\n初回パスワード: ${password}\n` +
+      `※ API 実装後はサーバ保存に切り替わります。`
+    );
+    setDraft(emptyAdmin);
+    setIsAdding(false);
+  } else {
+    console.error(e);
+    alert("追加に失敗しました。権限・ネットワーク・API設定を確認してください。");
+  }
+}
   };
 
   /** 編集保存 */

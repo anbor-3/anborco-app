@@ -271,9 +271,12 @@ function dedupeTemplates(input: Template[]): Template[] {
     if (!prev) {
       seen.set(k, t);
     } else {
-      const p = Date.parse(prev.date || "") || 0;
-      const c = Date.parse(t.date || "") || 0;
-      if (c >= p) seen.set(k, t);
+      const p = Date.parse(prev.date || "");
+   const c = Date.parse(t.date || "");
+   if (Number.isFinite(c) && Number.isFinite(p)) {
+     if (c >= p) seen.set(k, t);
+   }
+   // date が空などで比較不能なら既存を維持（＝最初の1件を採用）
     }
   }
   return Array.from(seen.values());
@@ -561,8 +564,11 @@ export default function AdminFileManager() {
     result["{{発注No}}"] = String(nextNo).padStart(4, "0");
 
     // 担当者・日付
-    const admins = JSON.parse(localStorage.getItem(`adminList_${company}`) || "[]");
-    const loggedIn = admins.find((a: any) => a.loginId === localStorage.getItem("loginId"));
+    const adminsA = JSON.parse(localStorage.getItem(`adminList_${company}`) || "[]");
+const adminsB = JSON.parse(localStorage.getItem("adminMaster") || "[]");
+const admins  = Array.isArray(adminsA) && adminsA.length > 0 ? adminsA : adminsB;
+
+const loggedIn = admins.find((a: any) => a.loginId === localStorage.getItem("loginId"));
     result["{{担当者}}"] = loggedIn?.name || "";
     result["{{today}}"] = todayStr();
 
@@ -840,9 +846,9 @@ export default function AdminFileManager() {
       </div>
 
       {/* ==== 当月 PDF 一覧 ==== */}
-      <h2 className="text-lg font-bold mt-8 mb-2">📄 当月提出 PDF</h2>
-      <table className="table-auto w-full border mb-8">
-        <thead className="bg-gray-100">
+      <h2 className="text-lg font-bold mt-8 mb-2 text-slate-900">📄 当月提出 PDF</h2>
+<table className="table-auto w-full border mb-8 text-slate-900">
+  <thead className="bg-gray-100 text-slate-900">
           <tr>
             <th className="border px-4 py-2">日付</th>
             <th className="border px-4 py-2">ドライバー</th>
@@ -945,6 +951,7 @@ export default function AdminFileManager() {
       )}
 
       <h2 className="text-lg font-bold mt-8 mb-2">📦 年次 ZIP</h2>
+ <p className="text-sm text-gray-500 mb-4">※年次ZIPの一覧は現在準備中です。</p>
 
       {/* ==== PDFプレビューモーダル ==== */}
       {pdfPreview?.open && createPortal(

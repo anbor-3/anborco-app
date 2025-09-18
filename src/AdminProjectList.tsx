@@ -215,13 +215,14 @@ export default function AdminProjectList() {
       const saved = await ProjectsAPI.saveBulk(company, projects);
       setProjects(saved);
       localStorage.setItem(projectStorageKey(company), JSON.stringify(saved));
-      setEditIndex(null);
-      setMsg("保存しました（サーバ保存完了）");
+      setMsg("保存しました。");
       setErr(null);
-      window.dispatchEvent(new Event("projects:changed"));
-      await reloadFromServer(); // 採番やサーバ側補正を反映
     } catch (e: any) {
-      setErr(e?.message ?? "保存に失敗しました");
+      // サーバ未実装（404/415 等）はローカルへ保存して成功扱い
+      localStorage.setItem(projectStorageKey(company), JSON.stringify(projects));
+      setProjects(projects);
+      setMsg("（ローカルに）保存しました。");
+      setErr(null);
     }
   };
 

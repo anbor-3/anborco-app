@@ -430,55 +430,18 @@ const VehicleManager: React.FC = () => {
       setInfo("保存しました。");
       window.dispatchEvent(new Event("vehicles:changed"));
     } catch (e: any) {
-      if (e?.status === 404) {
-        // ◆ ローカル保存で代替：新規は負IDを正に、既存は上書き
-        const current = vehicles.find((x) => x.id === id)!;
-        const normalizedId = id < 0 ? Math.abs(id) : id;
-        const next = vehicles.map((x) =>
-          x.id === id ? { ...current, id: normalizedId } : x
-        );
-        localStorage.setItem(vehicleStorageKey(company), JSON.stringify(next));
-        setVehicles(next);
-        setEditingId(null);
-        setInfo("（ローカルに）保存しました。");
-      } else {
-        setError(e?.message ?? "保存に失敗しました。");
-      }
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    const v = vehicles.find((x) => x.id === id);
-    if (!v) return;
-
-    if (!window.confirm("本当に削除しますか？")) return;
-
-    try {
-      if (id > 0) {
-        await VehiclesAPI.remove(id);
-      }
-      setVehicles((prev) => {
-        const next = prev.filter((x) => x.id !== id);
-        localStorage.setItem(vehicleStorageKey(company), JSON.stringify(next));
-        return next;
-      });
-      setInfo("削除しました。");
-      window.dispatchEvent(new Event("vehicles:changed"));
-      await reloadFromServer(); // ← 他端末の同期も意識して最新化
-    } catch (e: any) {
-      if (e?.status === 404) {
-        setVehicles((prev) => {
-          const next = prev.filter((x) => x.id !== id);
-          localStorage.setItem(vehicleStorageKey(company), JSON.stringify(next));
-          return next;
-        });
-        setInfo("（ローカルで）削除しました。");
-      } else {
-        setError(e?.message ?? "削除に失敗しました。");
-      }
-    }
+  if (e?.status === 404 || e?.status === 415) {
+    // サーバ未実装や HTML 応答でもローカル削除にフォールバック
+    setVehicles((prev) => {
+      const next = prev.filter((x) => x.id !== id);
+      localStorage.setItem(vehicleStorageKey(company), JSON.stringify(next));
+      return next;
+    });
+    setInfo("（ローカルで）削除しました。");
+  } else {
+    setError(e?.message ?? "削除に失敗しました。");
+  }
+}
   };
 
   const handleFiles = async (id: number, files: FileList | null) => {

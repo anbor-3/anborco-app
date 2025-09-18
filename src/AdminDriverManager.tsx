@@ -105,7 +105,9 @@ export interface Driver {
   uid: string; loginId: string; password: string; [key: string]: any;
 }
 
-const isProd = process.env.NODE_ENV === "production";
+const isProd =
+  (typeof process !== "undefined" && process.env?.NODE_ENV === "production") ||
+  (typeof import.meta !== "undefined" && (import.meta as any).env?.MODE === "production");
 
 const loadDriversLocal = (company: string): Driver[] => {
   try {
@@ -160,23 +162,32 @@ export const fetchDrivers = async (company: string): Promise<Driver[]> => {
     if (!isProd) saveDriversLocal(company, drivers);
     return drivers;
   } catch (error) {
-    console.error("❌ ドライバー取得失敗:", error);
-    // 取得失敗時：開発時はローカルにフォールバック
-    if (!isProd) return loadDriversLocal(company);
-    return [];
-  }
+  console.error("❌ ドライバー取得失敗:", error);
+  // 失敗時は常にローカルへフォールバック（開発/本番問わず）
+  const local = loadDriversLocal(company);
+  return Array.isArray(local) ? local : [];
+}
 };
 
 const persist = async (company: string, drivers: Driver[], opts?: { silent?: boolean }) => {
   const silent = !!opts?.silent;
+
+  // 先に sanitize（以後どの経路でも参照できる）
+  const sanitized = drivers.map(({ attachments, licenseFiles, password, ...rest }) => rest);
+
   const auth = getAuth();
   const idToken = await auth.currentUser?.getIdToken();
+
   if (!idToken) {
-    if (silent) return;
+    if (silent) {
+      // 未ログインでも静かにローカルへ保存
+      saveDriversLocal(company, sanitized as unknown as Driver[]);
+      return;
+    }
     alert("未ログインです。再ログインしてください。");
     throw new Error("no token");
   }
-  const sanitized = drivers.map(({ attachments, licenseFiles, password, ...rest }) => rest);
+
   try {
     const res = await fetch(api("/api/drivers/save"), {
       method: "POST",
@@ -184,15 +195,23 @@ const persist = async (company: string, drivers: Driver[], opts?: { silent?: boo
       credentials: "include",
       body: JSON.stringify({ company, drivers: sanitized }),
     });
-    if (!res.ok) throw new Error(`Save failed: ${res.status}`);
 
-    // ★成功時：開発時はローカルにも保存
+    if (!res.ok) {
+      if (!isProd) {
+        // 開発/未実装時はローカルへ
+        saveDriversLocal(company, sanitized as unknown as Driver[]);
+        if (silent) return;
+      }
+      throw new Error(`Save failed: ${res.status}`);
+    }
+
+    // 成功時：開発時はローカルにも保存
     if (!isProd) saveDriversLocal(company, sanitized as unknown as Driver[]);
   } catch (e) {
     console.error("❌ 保存に失敗:", e);
     if (!silent) alert("保存に失敗しました。ネットワークをご確認ください。");
 
-    // ★失敗時：開発時はローカルへフォールバック保存
+    // 失敗時：開発時はローカルへフォールバック保存
     if (!isProd) saveDriversLocal(company, sanitized as unknown as Driver[]);
     throw e;
   }
@@ -203,12 +222,7 @@ const AdminDriverManager = () => {
     persist(company, drivers, { silent: true });
   }, 600);
 
-  const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
- const company =
-   admin.company ||
-   admin.companyName ||
-   localStorage.getItem("company") ||
-   "";
+  const company = (typeof window !== "undefined" ? localStorage.getItem("company") : "") || "";
 
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [customFields, setCustomFields] = useState<string[]>([]);
@@ -495,9 +509,13 @@ const AdminDriverManager = () => {
 
     setDrivers(updated);
 
-// ★ 追加直後は必ず保存 → サーバ再読込（戻ると消える問題の対策）
-await persist(company, updated);
-await reloadFromServer();
+// 追加直後はサイレント保存（失敗時はローカルへ自動フォールバック）
+try {
+  await persist(company, updated, { silent: true });
+  await reloadFromServer();
+} catch {
+  // 失敗しても UI はそのまま。ローカルに残す
+}
 
 // 即編集 & 詳細展開
 setEditingIndex(newRowIndex);

@@ -20,26 +20,8 @@ interface Report {
 
 // ===== デモ判定 =====
 const loginId = localStorage.getItem("loginId") || "";
-const isDemo = loginId === "demo";
-
-// ===== デモ表示：稼働中になるよう end は空に =====
-const sampleReports: Report[] = isDemo ? [
-  {
-    id: 'DRV-0001',
-    company: '株式会社トライ物流',
-    name: '佐藤 和真',
-    date: new Date().toISOString().slice(0, 10),
-    temperature: 'OK',
-    alcohol: 'NG',
-    start: '08:00',
-    breakStart: '12:00',
-    breakEnd: '12:45',
-    end: '', // 稼働中
-    distanceBefore: 35210,
-    distanceAfter: 35310,
-    status: 'submitted',
-  }
-] : [];
+const isDemo = false;
+const sampleReports: Report[] = [];
 
 // ===== 進捗計算（どこまで入力されたか） =====
 function computeProgress(r: Report) {
@@ -102,6 +84,9 @@ export default function AdminDailyReport() {
         const res = await fetch("/api/daily-reports", {
           headers: { Authorization: `Bearer ${idToken}` },
         });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   const ct = res.headers.get("content-type") || "";
+   if (!ct.includes("application/json")) throw new Error("Non-JSON response");
         const data: Report[] = await res.json();
         setReports(data || []);
         setLastUpdatedAt(new Date().toLocaleTimeString());
@@ -145,7 +130,6 @@ export default function AdminDailyReport() {
         body: JSON.stringify({
           reports: [{
             id: r.id,
-            driverId: r.id, // 必要なら差し替え
             date: r.date,
             status: "approved",
             company: r.company,
@@ -192,7 +176,6 @@ export default function AdminDailyReport() {
       body: JSON.stringify({
         reports: [{
           id: merged.id,
-          driverId: merged.id, // 必要なら差し替え
           date: merged.date,
           status: merged.status || "submitted",
           company: merged.company,
@@ -229,9 +212,9 @@ export default function AdminDailyReport() {
     <div className="p-6 space-y-6">
       {/* ヘッダー：白文字問題を修正 */}
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-white tracking-wide">
+        <h1 className="text-3xl font-bold text-slate-900 tracking-wide">
   📋 <span className="align-middle">日報管理</span>
-  <span className="ml-2 text-sm text-white/70">- Active Driver Reports -</span>
+  <span className="ml-2 text-sm text-slate-500">- Active Driver Reports -</span>
 </h1>
         <div className="flex items-center gap-3">
           {!isDemo && (
