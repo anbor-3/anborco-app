@@ -213,91 +213,85 @@ const AdminManager = () => {
   };
 
   /** 追加 */
-const handleAdd = async () => {
-  if (!company) {
-    alert("会社が未確定です。ログインまたは URL の ?company=… を確認してください。");
-    return;
-  }
-
-  // ── 409（重複）に強いID発行＋Auth作成ループ ──
-  const { loginId: seedId } = generateLoginCredentials(admins);
-  let loginId = seedId;
-  let password = "";
-  let uid = "";
-  let attempts = 0;
-
-  try {
-    while (attempts < 5) {
-      // 毎回パスワード新規発行（画面には最後に成功した1回だけ表示）
-      password = Math.random().toString(36).slice(-8);
-      try {
-        const r = await provisionAdminAuth(company, loginId, password);
-        uid = r.uid;
-        break; // 成功
-      } catch (e: any) {
-        if (e?.status === 409) {
-          // ID衝突 → 末尾番号を+1して再試行（admin0001 → admin0002 → …）
-          const m = loginId.match(/^admin(\d{4})$/);
-          const n = m ? String(Number(m[1]) + 1).padStart(4, "0") : "0001";
-          loginId = `admin${n}`;
-          attempts++;
-          continue;
-        }
-        throw e; // その他のエラーはそのまま外側のcatchへ
-      }
-    }
-
-    if (!uid) {
-      alert("ログインIDの重複で作成できませんでした。もう一度お試しください。");
+  const handleAdd = async () => {
+    if (!company) {
+      alert("会社が未確定です。ログインまたは URL の ?company=… を確認してください。");
       return;
     }
 
-    // 2) サーバに管理者レコードを保存（会社でスコープ）
-    await AdminsAPI.create({
-      company,
-      contactPerson: draft.contactPerson || "",
-      phone: draft.phone || "",
-      uid,
-      loginId,
-      attachments: draft.attachments || [],
-      // ここにカスタム項目を展開
-      ...customFields.reduce<Record<string, any>>((acc, k) => {
-        acc[k] = (draft as any)[k] ?? "";
-        return acc;
-      }, {}),
-    });
+    // ── 409（重複）に強いID発行＋Auth作成ループ ──
+    const { loginId: seedId } = generateLoginCredentials(admins);
+    let loginId = seedId;
+    let password = "";
+    let uid = "";
+    let attempts = 0;
 
-    // 3) 再読込（全員に共有される）
-    const list = await AdminsAPI.list(company);
-    setAdmins(list ?? []);
-    alert(
-      `✅ 管理者を追加しました（会社: ${company}）\n` +
-      `ログインID: ${loginId}\n` +
-      `初回パスワード: ${password}\n\n` +
-      `※パスワードは今回のみ表示し、保存しません。`
-    );
-    setDraft(emptyAdmin);
-    setIsAdding(false);
-  } catch (e: any) {
-    const s = e?.status ?? 0;
-    if (!isProd && [0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
-      // 開発フォールバック（本番は通らない）
-      const next = [
-        ...admins,
-        { ...draft, id: admins.length, company, uid: draft.uid || "dev-uid", loginId },
-      ];
-      persistLocal(next);
+    try {
+      while (attempts < 5) {
+        password = Math.random().toString(36).slice(-8);
+        try {
+          const r = await provisionAdminAuth(company, loginId, password);
+          uid = r.uid;
+          break; // 成功
+        } catch (e: any) {
+          if (e?.status === 409) {
+            const m = loginId.match(/^admin(\d{4})$/);
+            const n = m ? String(Number(m[1]) + 1).padStart(4, "0") : "0001";
+            loginId = `admin${n}`;
+            attempts++;
+            continue;
+          }
+          throw e;
+        }
+      }
+
+      if (!uid) {
+        alert("ログインIDの重複で作成できませんでした。もう一度お試しください。");
+        return;
+      }
+
+      await AdminsAPI.create({
+        company,
+        contactPerson: draft.contactPerson || "",
+        phone: draft.phone || "",
+        uid,
+        loginId,
+        attachments: draft.attachments || [],
+        ...customFields.reduce<Record<string, any>>((acc, k) => {
+          acc[k] = (draft as any)[k] ?? "";
+          return acc;
+        }, {}),
+      });
+
+      const list = await AdminsAPI.list(company);
+      setAdmins(list ?? []);
       alert(
-        `（開発）ローカルに追加: ${loginId}\nパスワード: ${password}\n※本番ではサーバ保存に切り替わります。`
+        `✅ 管理者を追加しました（会社: ${company}）\n` +
+        `ログインID: ${loginId}\n` +
+        `初回パスワード: ${password}\n\n` +
+        `※パスワードは今回のみ表示し、保存しません。`
       );
       setDraft(emptyAdmin);
       setIsAdding(false);
-    } else {
-      console.error(e);
-      alert("追加に失敗しました。権限・ネットワーク・API設定を確認してください。");
+    } catch (e: any) {
+      const s = e?.status ?? 0;
+      if (!isProd && [0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
+        const next = [
+          ...admins,
+          { ...draft, id: admins.length, company, uid: draft.uid || "dev-uid", loginId },
+        ];
+        persistLocal(next);
+        alert(
+          `（開発）ローカルに追加: ${loginId}\nパスワード: ${password}\n※本番ではサーバ保存に切り替わります。`
+        );
+        setDraft(emptyAdmin);
+        setIsAdding(false);
+      } else {
+        console.error(e);
+        alert("追加に失敗しました。権限・ネットワーク・API設定を確認してください。");
+      }
     }
-  }
-};
+  };
 
   /** 編集保存 */
   const saveEdit = async () => {
@@ -306,7 +300,6 @@ const handleAdd = async () => {
       await AdminsAPI.update(editRowId, {
         contactPerson: draft.contactPerson,
         phone: draft.phone,
-        // 会社は固定（クロス会社変更を禁止）
         attachments: draft.attachments,
         ...customFields.reduce<Record<string, any>>((acc, k) => {
           acc[k] = (draft as any)[k] ?? "";
@@ -376,61 +369,134 @@ const handleAdd = async () => {
     setEditRowId(row.id);
   };
 
-  /** 行レンダリング（会社名は固定表示・編集不可に変更） */
+  /** 行レンダリング（会社名は固定表示・編集不可） */
   const renderRow = (admin: AdminUser) => {
     const isEdit = editRowId === admin.id;
     return (
-      <tr key={admin.id} className="text-center hover:bg-gray-50">
-        <td className="border px-3 py-2 w-28">
+      <tr
+        key={admin.id}
+        className="group text-center bg-white hover:bg-emerald-50 transition-colors"
+      >
+        {/* 操作列（左固定で視認性UP） */}
+        <td className="sticky left-0 z-[1] bg-white border-r border-slate-200 px-3 py-2 w-36 shadow-[1px_0_0_0_rgba(226,232,240,1)]">
           {isEdit ? (
-            <>
-              <button className="bg-green-600 text-white px-2 py-1 rounded mr-1" onClick={saveEdit}>保存</button>
-              <button className="bg-gray-400 text-white px-2 py-1 rounded" onClick={() => { setEditRowId(null); setDraft(emptyAdmin); }}>キャンセル</button>
-            </>
+            <div className="flex gap-2 justify-center">
+              <button
+                className="bg-emerald-600 text-white px-3 py-1 rounded-md text-xs hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                onClick={saveEdit}
+              >
+                保存
+              </button>
+              <button
+                className="bg-slate-400 text-white px-3 py-1 rounded-md text-xs hover:bg-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                onClick={() => { setEditRowId(null); setDraft(emptyAdmin); }}
+              >
+                ｷｬﾝｾﾙ
+              </button>
+            </div>
           ) : (
-            <>
-              <button className="bg-blue-600 text-white px-2 py-1 rounded mr-1" onClick={() => startEdit(admin)}>編集</button>
-              <button className="bg-red-600 text-white px-2 py-1 rounded" onClick={() => deleteRow(admin.id)}>削除</button>
-            </>
+            <div className="flex gap-2 justify-center">
+              <button
+                className="bg-blue-600 text-white px-3 py-1 rounded-md text-xs hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                onClick={() => startEdit(admin)}
+              >
+                編集
+              </button>
+              <button
+                className="bg-rose-600 text-white px-3 py-1 rounded-md text-xs hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-300"
+                onClick={() => deleteRow(admin.id)}
+              >
+                削除
+              </button>
+            </div>
           )}
         </td>
-        {/* 会社名：編集不可（会社内で共有するため固定） */}
-        <td className="border px-3 py-2">{admin.company}</td>
-        <td className="border px-3 py-2">
+
+        {/* 会社名：編集不可 */}
+        <td className="px-4 py-2 text-slate-800">{admin.company}</td>
+
+        <td className="px-4 py-2">
           {isEdit ? (
-            <input className="w-full border px-2 py-1" value={draft.contactPerson} onChange={(e) => setDraft({ ...draft, contactPerson: e.target.value })} />
-          ) : admin.contactPerson}
+            <input
+              className="w-full border border-slate-300 rounded-md px-2 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              value={draft.contactPerson}
+              onChange={(e) => setDraft({ ...draft, contactPerson: e.target.value })}
+            />
+          ) : (
+            <span className="text-slate-900">{admin.contactPerson}</span>
+          )}
         </td>
-        <td className="border px-3 py-2">
+
+        <td className="px-4 py-2">
           {isEdit ? (
-            <input className="w-full border px-2 py-1" value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />
-          ) : admin.phone}
+            <input
+              className="w-full border border-slate-300 rounded-md px-2 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              value={draft.phone}
+              onChange={(e) => setDraft({ ...draft, phone: e.target.value })}
+            />
+          ) : (
+            <span className="text-slate-900">{admin.phone}</span>
+          )}
         </td>
-        <td className="border px-3 py-2">{admin.uid}</td>
-        <td className="border px-3 py-2">{admin.loginId}</td>
-        <td className="border px-3 py-2">••••••</td>
+
+        {/* 視認性向上：UID/ログインIDをバッジ表示（項目はそのまま） */}
+        <td className="px-4 py-2">
+          <span className="inline-flex items-center rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+            {admin.uid}
+          </span>
+        </td>
+
+        <td className="px-4 py-2">
+          <span className="inline-flex items-center rounded-full border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+            {admin.loginId}
+          </span>
+        </td>
+
+        <td className="px-4 py-2">
+          <span className="tracking-widest text-slate-500">••••••</span>
+        </td>
+
         {customFields.map((field, idx) => (
-          <td key={idx} className="border px-3 py-2">
+          <td key={idx} className="px-4 py-2">
             {isEdit ? (
               <input
-                className="w-full border px-2 py-1"
+                className="w-full border border-slate-300 rounded-md px-2 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                 value={draft[field] || ""}
                 onChange={(e) => setDraft({ ...draft, [field]: e.target.value })}
               />
             ) : (
-              admin[field] || ""
+              <span className="text-slate-900">{admin[field] || ""}</span>
             )}
           </td>
         ))}
-        <td className="border px-3 py-2 text-left">
+
+        {/* 添付 */}
+        <td className="px-4 py-2 text-left">
           {isEdit ? (
             <div>
-              <input type="file" multiple onChange={handleFileChange} className="mb-2" />
+              <input
+                type="file"
+                multiple
+                onChange={handleFileChange}
+                className="mb-2 block text-sm text-slate-700"
+              />
               <ul className="text-xs space-y-1">
                 {draft.attachments.map((att, idx) => (
-                  <li key={idx} className="flex justify-between">
-                    <a href={att.dataUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">{att.name}</a>
-                    <button onClick={() => removeAttachment(idx)} className="text-red-600 ml-2">削除</button>
+                  <li key={idx} className="flex items-center justify-between">
+                    <a
+                      href={att.dataUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-700 underline hover:text-blue-800"
+                    >
+                      {att.name}
+                    </a>
+                    <button
+                      onClick={() => removeAttachment(idx)}
+                      className="text-rose-600 hover:text-rose-700 ml-2"
+                    >
+                      削除
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -438,8 +504,8 @@ const handleAdd = async () => {
           ) : (
             <ul className="text-xs space-y-1">
               {admin.attachments?.map((att, idx) => {
-                const byteString = atob(att.dataUrl.split(",")[1]);
-                const mimeString = att.dataUrl.split(",")[0].split(":")[1].split(";")[0];
+                const byteString = atob(att.dataUrl.split(",")[1] || "");
+                const mimeString = (att.dataUrl.split(",")[0]?.split(":")[1]?.split(";")[0]) || "application/octet-stream";
                 const ab = new ArrayBuffer(byteString.length);
                 const ia = new Uint8Array(ab);
                 for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
@@ -447,7 +513,12 @@ const handleAdd = async () => {
                 const blobUrl = URL.createObjectURL(blob);
                 return (
                   <li key={idx}>
-                    <a href={blobUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                    <a
+                      href={blobUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-700 underline hover:text-blue-800"
+                    >
                       {att.name}
                     </a>
                   </li>
@@ -462,12 +533,13 @@ const handleAdd = async () => {
 
   return (
     <div className="p-6 font-sans">
-      <h1 className="text-2xl font-bold mb-4">
-        👤 管理者管理<span className="ml-2 text-sm text-gray-500">-AdminManager-</span>
-      </h1>
+      <h1 className="text-2xl font-bold mb-4 text-white">
+  👤 <span className="align-middle">管理者管理</span>
+  <span className="ml-2 text-sm text-white/70">- AdminManager -</span>
+</h1>
 
       <button
-        className="mb-4 bg-blue-600 text-white px-4 py-2 rounded"
+        className="mb-4 bg-blue-600 text-white px-4 py-2 rounded-md shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
         onClick={() => {
           setDraft({ ...emptyAdmin, company }); // 会社は固定
           setIsAdding(true);
@@ -476,69 +548,121 @@ const handleAdd = async () => {
         ＋ ユーザー追加
       </button>
 
-      <table className="min-w-full border border-gray-300 bg-white rounded shadow text-sm">
-        <thead className="bg-gray-100 text-gray-700">
-          <tr>
-            <th className="border px-3 py-2 w-28">操作</th>
-            <th className="border px-3 py-2">会社名</th>
-            <th className="border px-3 py-2">担当者</th>
-            <th className="border px-3 py-2">電話番号</th>
-            <th className="border px-3 py-2">UID</th>
-            <th className="border px-3 py-2">ログインID</th>
-            <th className="border px-3 py-2">パスワード（非表示）</th>
-            {customFields.map((field, idx) => (
-              <th key={idx} className="border px-3 py-2">{field}</th>
-            ))}
-            <th className="border px-3 py-2">添付ファイル</th>
-          </tr>
-        </thead>
-        <tbody>
-          {admins.map(renderRow)}
-          {isAdding && (
-            <tr className="text-center bg-yellow-50">
-              <td className="border px-3 py-2 w-28">追加中</td>
-              {/* 会社名は固定表示（編集不可） */}
-              <td className="border px-3 py-2">
-                <span className="text-gray-800">{company || "—"}</span>
-              </td>
-              <td className="border px-3 py-2">
-                <input className="w-full border px-2 py-1" value={draft.contactPerson} onChange={(e) => setDraft({ ...draft, contactPerson: e.target.value })} />
-              </td>
-              <td className="border px-3 py-2">
-                <input className="w-full border px-2 py-1" value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />
-              </td>
-              <td className="border px-3 py-2 text-gray-500">作成時に自動設定</td>
-              <td className="border px-3 py-2 text-gray-500">自動発行</td>
-              <td className="border px-3 py-2 text-gray-500">自動発行</td>
+      {/* === ここから革新的テーブルUI（項目は一切変更なし） === */}
+      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm relative">
+        {/* 上部バー（情報帯） */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-slate-200 bg-gradient-to-r from-emerald-50 to-teal-50">
+          <span className="text-xs text-slate-600">
+            テーブルは横スクロール対応 / 操作列は左固定
+          </span>
+          <span className="text-xs text-slate-500">
+            合計: <span className="font-semibold text-slate-700">{admins.length}</span> 件
+          </span>
+        </div>
+
+        <table className="min-w-full text-sm">
+          <thead className="sticky top-0 z-[2] bg-slate-50/95 backdrop-blur supports-[backdrop-filter]:bg-slate-50/80">
+            <tr className="text-left text-slate-700">
+              <th className="sticky left-0 z-[3] bg-slate-50/95 px-3 py-3 w-36 font-semibold border-r border-slate-200">操作</th>
+              <th className="px-4 py-3 font-semibold">会社名</th>
+              <th className="px-4 py-3 font-semibold">担当者</th>
+              <th className="px-4 py-3 font-semibold">電話番号</th>
+              <th className="px-4 py-3 font-semibold">UID</th>
+              <th className="px-4 py-3 font-semibold">ログインID</th>
+              <th className="px-4 py-3 font-semibold">パスワード（非表示）</th>
               {customFields.map((field, idx) => (
-                <td key={idx} className="border px-3 py-2">
+                <th key={idx} className="px-4 py-3 font-semibold">{field}</th>
+              ))}
+              <th className="px-4 py-3 font-semibold">添付ファイル</th>
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-slate-100">
+            {admins.map(renderRow)}
+
+            {isAdding && (
+              <tr className="text-center bg-yellow-50">
+                <td className="sticky left-0 z-[1] bg-yellow-50 px-3 py-2 w-36 border-r border-slate-200">
+                  追加中
+                </td>
+                {/* 会社名は固定表示（編集不可） */}
+                <td className="px-4 py-2">
+                  <span className="text-slate-800">{company || "—"}</span>
+                </td>
+                <td className="px-4 py-2">
                   <input
-                    className="w-full border px-2 py-1"
-                    value={(draft as any)[field] || ""}
-                    onChange={(e) => setDraft({ ...draft, [field]: e.target.value })}
+                    className="w-full border border-slate-300 rounded-md px-2 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                    value={draft.contactPerson}
+                    onChange={(e) => setDraft({ ...draft, contactPerson: e.target.value })}
                   />
                 </td>
-              ))}
-              <td className="border px-3 py-2">
-                <input type="file" multiple onChange={handleFileChange} className="mb-2" />
-                <ul className="text-xs space-y-1">
-                  {draft.attachments.map((att, idx) => (
-                    <li key={idx} className="flex justify-between">
-                      <a href={att.dataUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">{att.name}</a>
-                      <button onClick={() => removeAttachment(idx)} className="text-red-600 ml-2">削除</button>
-                    </li>
-                  ))}
-                </ul>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+                <td className="px-4 py-2">
+                  <input
+                    className="w-full border border-slate-300 rounded-md px-2 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                    value={draft.phone}
+                    onChange={(e) => setDraft({ ...draft, phone: e.target.value })}
+                  />
+                </td>
+                <td className="px-4 py-2 text-slate-500">作成時に自動設定</td>
+                <td className="px-4 py-2 text-slate-500">自動発行</td>
+                <td className="px-4 py-2 text-slate-500">自動発行</td>
+                {customFields.map((field, idx) => (
+                  <td key={idx} className="px-4 py-2">
+                    <input
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                      value={(draft as any)[field] || ""}
+                      onChange={(e) => setDraft({ ...draft, [field]: e.target.value })}
+                    />
+                  </td>
+                ))}
+                <td className="px-4 py-2">
+                  <input
+                    type="file"
+                    multiple
+                    onChange={handleFileChange}
+                    className="mb-2 block text-sm text-slate-700"
+                  />
+                  <ul className="text-xs space-y-1">
+                    {draft.attachments.map((att, idx) => (
+                      <li key={idx} className="flex justify-between">
+                        <a
+                          href={att.dataUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-700 underline hover:text-blue-800"
+                        >
+                          {att.name}
+                        </a>
+                        <button
+                          onClick={() => removeAttachment(idx)}
+                          className="text-rose-600 hover:text-rose-700 ml-2"
+                        >
+                          削除
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {isAdding && (
         <div className="mt-4 flex gap-4">
-          <button onClick={handleAdd} className="bg-green-600 text-white px-4 py-2 rounded">追加</button>
-          <button onClick={() => { setIsAdding(false); setDraft(emptyAdmin); }} className="bg-gray-400 text-white px-4 py-2 rounded">キャンセル</button>
+          <button
+            onClick={handleAdd}
+            className="bg-emerald-600 text-white px-4 py-2 rounded-md shadow hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          >
+            追加
+          </button>
+          <button
+            onClick={() => { setIsAdding(false); setDraft(emptyAdmin); }}
+            className="bg-slate-400 text-white px-4 py-2 rounded-md shadow hover:bg-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-300"
+          >
+            キャンセル
+          </button>
         </div>
       )}
     </div>

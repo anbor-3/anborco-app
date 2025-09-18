@@ -37,19 +37,23 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.complianceNews = void 0;
+// functions/src/index.ts
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const rss_parser_1 = __importDefault(require("rss-parser"));
 const cors_1 = __importDefault(require("cors"));
 admin.initializeApp();
+/** 本番で呼び出す想定の許可ドメイン */
 const ALLOWED_ORIGINS = [
-    /^https:\/\/app\.anbor\.co\.jp$/,
-    /^http:\/\/localhost:5173$/,
+    /^https:\/\/app\.anbor\.co\.jp$/, // 将来のカスタムドメイン
+    /^https:\/\/anborco-app\.web\.app$/, // いま表示している本番 Hosting
+    /^https:\/\/anborco-app\.firebaseapp\.com$/, // 旧URL（念のため）
+    /^http:\/\/localhost:5173$/, // 開発用
 ];
 const corsMw = (0, cors_1.default)({
-    origin: (origin, cb) => {
+    origin(origin, cb) {
         if (!origin)
-            return cb(null, true);
+            return cb(null, true); // curl等
         const ok = ALLOWED_ORIGINS.some((rx) => rx.test(origin));
         cb(null, ok);
     },
@@ -69,15 +73,11 @@ const KEYWORDS = [
     "点呼", "アルコール", "飲酒", "労働時間", "過労", "監査", "行政処分",
     "燃料", "軽油", "ガソリン", "税", "補助", "カーボン", "排出",
 ];
-function hitKeyword(text = "", kw = KEYWORDS) {
-    const t = text.toLowerCase();
-    return kw.some((k) => t.includes(k.toLowerCase()));
-}
+const hitKeyword = (text = "", kw = KEYWORDS) => kw.some((k) => text.toLowerCase().includes(k.toLowerCase()));
 exports.complianceNews = functions
     .region("asia-northeast1")
     .https.onRequest(async (req, res) => {
-    // ← return を付けて CORS の完了を呼び出し側に返す
-    return corsMw(req, res, async () => {
+    corsMw(req, res, async () => {
         const limit = Math.max(1, Math.min(50, Number(req.query.limit ?? 20)));
         const keywords = String(req.query.q || "").trim();
         const useFilter = keywords.length > 0 || req.query.filter === "1";
@@ -99,6 +99,7 @@ exports.complianceNews = functions
             let items = results
                 .filter((r) => r.status === "fulfilled")
                 .flatMap((r) => r.value);
+            // link重複除去
             const seen = new Set();
             items = items.filter((n) => (seen.has(n.link) ? false : (seen.add(n.link), true)));
             if (useFilter)

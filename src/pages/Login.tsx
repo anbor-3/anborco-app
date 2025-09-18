@@ -1,11 +1,10 @@
-// src/pages/Login.tsx  ← 丸ごと置換してください
+// src/pages/Login.tsx
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { initialDemoDrivers } from "../utils/initialDemoDrivers";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../firebaseClient"; // Firebase Auth をエクスポートしている前提
+import { auth } from "../firebaseClient";
 
-// ---- 本番補足：マスター認証情報は環境変数から読み込み（なければ従来値にフォールバック）----
 const MASTER_ID = import.meta.env.VITE_MASTER_ID ?? "anbor";
 const MASTER_PASSWORD = import.meta.env.VITE_MASTER_PASSWORD ?? "anboradminpass";
 
@@ -24,287 +23,222 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  // ---- 元の意図を維持しつつ、本番向けにnullガード/整形を強化 ----
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
     setLoading(true);
-
     try {
-      const typedRaw = id ?? "";
-      const passRaw = password ?? "";
-      const typed = typedRaw.trim();
-      const pass = passRaw.trim();
-
-      if (!typed || !pass) {
-        alert("ID と パスワードを入力してください");
-        return;
-      }
+      const typed = (id ?? "").trim();
+      const pass = (password ?? "").trim();
+      if (!typed || !pass) { alert("ID と パスワードを入力してください"); return; }
 
       // --- master ---
       if (selectedRole === "master") {
-        // 1) 固定ID/パス（環境変数化）での即ログイン（元仕様互換）
         if (typed === MASTER_ID && pass === MASTER_PASSWORD) {
-          localStorage.setItem(
-            "currentUser",
-            JSON.stringify({
-              id: MASTER_ID,
-              name: "マスター管理者",
-              company: "ANBOR本社",
-              role: "master",
-            })
-          );
-          navigate("/master");
-          return;
+          localStorage.setItem("currentUser", JSON.stringify({ id: MASTER_ID, name: "マスター管理者", company: "ANBOR本社", role: "master" }));
+          navigate("/master"); return;
         }
-
-        // 2) メール/ID → メール化して Firebase Auth
-        const email = typed.includes("@")
-          ? typed.toLowerCase()
-          : `${typed.toLowerCase()}@anborco.jp`;
+        const email = typed.includes("@") ? typed.toLowerCase() : `${typed.toLowerCase()}@anborco.jp`;
         await signInWithEmailAndPassword(auth, email, pass);
-
-        // ローカルの顧客台帳をメタ参照（元仕様互換）
         const customers = JSON.parse(localStorage.getItem("customerMaster") || "[]");
-        const meta = customers.find(
-          (u: any) =>
-            (typeof u?.uid === "string" && u.uid.toLowerCase() === email) ||
-            (typeof u?.loginId === "string" && u.loginId.toLowerCase() === typed.toLowerCase())
+        const meta = customers.find((u: any) =>
+          (typeof u?.uid === "string" && u.uid.toLowerCase() === email) ||
+          (typeof u?.loginId === "string" && u.loginId.toLowerCase() === typed.toLowerCase())
         );
-
-        localStorage.setItem(
-          "currentUser",
-          JSON.stringify({
-            id: email,
-            name: meta?.contactPerson || meta?.company || email,
-            company: meta?.company || "",
-            role: "master",
-          })
-        );
-        navigate("/master");
-        return;
+        localStorage.setItem("currentUser", JSON.stringify({ id: email, name: meta?.contactPerson || meta?.company || email, company: meta?.company || "", role: "master" }));
+        navigate("/master"); return;
       }
 
-      // --- driver（localStorage 照合 + demo バイパス） ---
+      // --- driver ---
       if (selectedRole === "driver") {
-        // ✅ demo 即ログイン（元仕様互換）
         if (typed.toLowerCase() === "demo" && pass === "demo") {
           resetDemoData();
-          const demoUser = {
-            uid: "demo-driver-001",
-            name: "デモ太郎",
-            company: "デモ会社",
-            loginId: "demo",
-          };
-          localStorage.setItem(
-            "currentUser",
-            JSON.stringify({
-              id: demoUser.uid,
-              name: demoUser.name,
-              company: demoUser.company,
-              role: "driver",
-            })
-          );
+          const demoUser = { uid: "demo-driver-001", name: "デモ太郎", company: "デモ会社", loginId: "demo" };
+          localStorage.setItem("currentUser", JSON.stringify({ id: demoUser.uid, name: demoUser.name, company: demoUser.company, role: "driver" }));
           localStorage.setItem("company", demoUser.company);
           localStorage.setItem("loginId", demoUser.loginId);
           localStorage.setItem("loggedInDriver", "1");
-          navigate("/driver", { replace: true });
-          return;
+          navigate("/driver", { replace: true }); return;
         }
-
-        // 通常：ブラウザ保存の driverList_* から照合（元仕様）
         const allKeys = Object.keys(localStorage).filter((k) => k.startsWith("driverList_"));
         let user: any = null;
         for (const key of allKeys) {
           const list = JSON.parse(localStorage.getItem(key) || "[]");
-          const found = list.find(
-            (u: any) =>
-              u?.loginId?.toLowerCase?.() === typed.toLowerCase() &&
-              (u?.password === pass || u?.password?.toString?.() === pass)
+          const found = list.find((u: any) =>
+            u?.loginId?.toLowerCase?.() === typed.toLowerCase() &&
+            (u?.password === pass || u?.password?.toString?.() === pass)
           );
-          if (found) {
-            user = found;
-            break;
-          }
+          if (found) { user = found; break; }
         }
-        if (!user) {
-          alert("ログインID または パスワードが違います");
-          return;
-        }
-
+        if (!user) { alert("ログインID または パスワードが違います"); return; }
         if (user.loginId === "demo") resetDemoData();
-
-        localStorage.setItem(
-          "currentUser",
-          JSON.stringify({
-            id: user.uid,
-            name: user.name,
-            company: user.company,
-            role: "driver",
-          })
-        );
+        localStorage.setItem("currentUser", JSON.stringify({ id: user.uid, name: user.name, company: user.company, role: "driver" }));
         localStorage.setItem("company", user.company);
         localStorage.setItem("loginId", user.loginId);
         localStorage.setItem("loggedInDriver", "1");
-        navigate("/driver");
-        return;
+        navigate("/driver"); return;
       }
 
       // --- admin ---
       if (selectedRole === "admin") {
-        // ✅ demo 即ログイン（元仕様互換）
         if (typed.toLowerCase() === "demo" && pass === "demo") {
           const demoUser = { loginId: "demo", contactPerson: "管理者デモ", company: "デモ会社" };
           const list = JSON.parse(localStorage.getItem("adminMaster") || "[]");
-          if (!list.some((u: any) => u?.loginId?.toLowerCase?.() === "demo")) {
-            list.push(demoUser);
-            localStorage.setItem("adminMaster", JSON.stringify(list));
-          }
+          if (!list.some((u: any) => u?.loginId?.toLowerCase?.() === "demo")) { list.push(demoUser); localStorage.setItem("adminMaster", JSON.stringify(list)); }
           resetDemoData();
-
-          localStorage.setItem(
-            "currentUser",
-            JSON.stringify({
-              id: "demo",
-              name: demoUser.contactPerson,
-              company: demoUser.company,
-              role: "admin",
-            })
-          );
+          localStorage.setItem("currentUser", JSON.stringify({ id: "demo", name: demoUser.contactPerson, company: demoUser.company, role: "admin" }));
           localStorage.setItem("company", demoUser.company);
-          navigate("/admin");
-          return;
+          navigate("/admin"); return;
         }
-
-        // 通常：Firebase Auth（メール or ID→メール化）+ 管理者マスタ参照（元仕様）
-        const email = typed.includes("@")
-          ? typed.toLowerCase()
-          : `${typed.toLowerCase()}@anborco.jp`;
+        const email = typed.includes("@") ? typed.toLowerCase() : `${typed.toLowerCase()}@anborco.jp`;
         await signInWithEmailAndPassword(auth, email, pass);
-
         const adminList = JSON.parse(localStorage.getItem("adminMaster") || "[]");
-        const user = adminList.find(
-          (u: any) =>
-            (typeof u?.loginId === "string" &&
-              u.loginId.toLowerCase() === typed.toLowerCase()) ||
-            (typeof u?.uid === "string" && u.uid.toLowerCase() === email)
+        const user = adminList.find((u: any) =>
+          (typeof u?.loginId === "string" && u.loginId.toLowerCase() === typed.toLowerCase()) ||
+          (typeof u?.uid === "string" && u.uid.toLowerCase() === email)
         );
-
         if (user?.loginId === "demo") resetDemoData();
-
-        localStorage.setItem(
-          "currentUser",
-          JSON.stringify({
-            id: user?.loginId || typed,
-            name: user?.contactPerson || user?.company || typed,
-            company: user?.company || "",
-            role: "admin",
-          })
-        );
+        localStorage.setItem("currentUser", JSON.stringify({ id: user?.loginId || typed, name: user?.contactPerson || user?.company || typed, company: user?.company || "", role: "admin" }));
         localStorage.setItem("company", user?.company || "");
-        navigate("/admin");
-        return;
+        navigate("/admin"); return;
       }
     } catch (e: any) {
       console.error(e);
-      const msg =
-        e?.code === "auth/user-not-found" || e?.code === "auth/wrong-password"
-          ? "ID または パスワードが違います"
-          : "ログインに失敗しました。しばらくしてから再度お試しください。";
+      const msg = e?.code === "auth/user-not-found" || e?.code === "auth/wrong-password"
+        ? "ID または パスワードが違います"
+        : "ログインに失敗しました。しばらくしてから再度お試しください。";
       alert(msg);
     } finally {
       setLoading(false);
     }
   };
 
-  // ---- UIは元のまま（クラス名/構造/文言も不変更）----
   return (
-    <div className="login-container flex items-center justify-center min-h-screen bg-gray-100">
-      <div className="login-box w-full max-w-2xl bg-white p-10 rounded shadow-lg">
-        <div className="flex justify-center mb-6">
-          <img src="/logo.png" alt="ロゴ" className="h-40" />
+  <div className="fixed inset-0 overflow-hidden text-slate-100">
+    {/* 背景＆塗り＆白枠 */}
+    <div aria-hidden className="absolute inset-0 bg-[#0b1220] bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950" />
+    <div aria-hidden className="absolute inset-0 bg-white/[0.06] backdrop-blur-[2px]" />
+    <div aria-hidden className="pointer-events-none absolute inset-3 sm:inset-5 lg:inset-12 xl:inset-16 rounded-[32px] border-[8px] border-white/35" />
+
+    {/* ネオングロー */}
+    <div aria-hidden className="pointer-events-none absolute inset-0">
+      <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-cyan-500/25 blur-3xl" />
+      <div className="absolute -bottom-24 -right-24 h-80 w-80 rounded-full bg-teal-400/25 blur-3xl" />
+      <div className="absolute left-1/2 top-1/3 h-96 w-96 -translate-x-1/2 rounded-full bg-indigo-500/20 blur-3xl" />
+    </div>
+
+    {/* ★白枠の内側を10%縮小し、左右5:5の等幅に */}
+    <div className="absolute inset-3 sm:inset-5 lg:inset-12 xl:inset-16 z-10">
+      <div className="h-full w-full flex items-center justify-center">
+        <div className="h-[90%] w-[90%]">
+          <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-stretch">
+
+            {/* 左：タイトル + 画像（カード高さ=右と同じ） */}
+            <div className="min-h-0 flex flex-col">
+              <p className="text-center text-white/85 text-base sm:text-lg lg:text-xl font-semibold mb-3 sm:mb-4">
+                運転日報・業務管理アプリ
+              </p>
+              <div className="relative flex-1 min-h-0 overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-xl shadow-2xl">
+                <img
+                  src={`${import.meta.env.BASE_URL}login-visual.jpg`}
+                  alt="近未来の軽バン配送イメージ"
+                  className="w-full h-full object-cover object-center"
+                />
+              </div>
+            </div>
+
+            {/* 右：ログイン（中央寄せ＋左右10%狭め） */}
+<div className="min-h-0 flex flex-col">
+  {/* カード自体をフレックスにして縦中央寄せ。外側のパディングは0に移動 */}
+  <div className="flex-1 min-h-0 rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-0 flex">
+    {/* 中身を左右10%狭め（=幅80%）かつ縦中央に配置。溢れたら中だけスクロール */}
+    <div className="my-auto mx-auto w-[80%] max-h-full overflow-auto p-6 sm:p-8">
+      <div className="mb-6 flex items-center justify-between">
+        <h2 className="text-xl font-semibold">ログイン</h2>
+      </div>
+
+      {/* 役割タブ */}
+      <div className="mb-6 rounded-xl bg-white/5 p-1 shadow-inner">
+        <div className="grid grid-cols-3 gap-1">
+          {(["driver","admin","master"] as Role[]).map((role) => {
+            const selected = selectedRole === role;
+            const label = role === "driver" ? "ドライバー" : role === "admin" ? "管理者" : "マスター";
+            return (
+              <button
+                key={role}
+                type="button"
+                onClick={() => setSelectedRole(role)}
+                disabled={loading}
+                aria-pressed={selected}
+                className={[
+                  "h-11 rounded-lg text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-cyan-400/60",
+                  selected
+                    ? "bg-gradient-to-r from-teal-400 to-cyan-500 text-slate-900 shadow-[0_0_22px_rgba(34,211,238,.45)]"
+                    : "text-white/75 hover:text-white"
+                ].join(" ")}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <form className="space-y-5" onSubmit={handleSubmit}>
+        <div>
+          <label className="mb-2 block text-sm font-medium text-white/80">ID（ログインID）</label>
+          <input
+            type="text"
+            value={id}
+            onChange={(e) => setId(e.target.value)}
+            disabled={loading}
+            placeholder={selectedRole === "driver" ? "ログインIDを入力" : "IDを入力"}
+            className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-base text-white placeholder-white/40 outline-none transition focus:ring-2 focus:ring-cyan-400/60"
+          />
         </div>
 
-        <div className="flex justify-center gap-4 mb-6">
-          <button
-            className={`px-6 py-3 rounded text-base font-semibold ${
-              selectedRole === "driver" ? "bg-green-700 text-white" : "bg-green-200"
-            }`}
-            onClick={() => setSelectedRole("driver")}
+        <div>
+          <label className="mb-2 block text-sm font-medium text-white/80">パスワード</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
             disabled={loading}
-          >
-            ドライバー
-          </button>
-          <button
-            className={`px-6 py-3 rounded text-base font-semibold ${
-              selectedRole === "admin" ? "bg-green-700 text-white" : "bg-green-200"
-            }`}
-            onClick={() => setSelectedRole("admin")}
-            disabled={loading}
-          >
-            管理者
-          </button>
-          <button
-            className={`px-6 py-3 rounded text-base font-semibold ${
-              selectedRole === "master" ? "bg-gray-700 text-white" : "bg-gray-200"
-            }`}
-            onClick={() => setSelectedRole("master")}
-            disabled={loading}
-          >
-            マスター
-          </button>
+            placeholder="パスワードを入力"
+            className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-base text-white placeholder-white/40 outline-none transition focus:ring-2 focus:ring-cyan-400/60"
+          />
         </div>
 
-        <form className="space-y-6" onSubmit={handleSubmit}>
-          <div>
-            <label className="block mb-2 text-base font-semibold text-gray-700">
-              ID（ログインID）
-            </label>
-            <input
-              type="text"
-              value={id}
-              onChange={(e) => setId(e.target.value)}
-              disabled={loading}
-              className="w-full px-5 py-3 border border-gray-300 rounded-md text-lg"
-              placeholder={selectedRole === "driver" ? "ログインIDを入力" : "IDを入力"}
-            />
+        <button
+          type="submit"
+          disabled={loading}
+          className={[
+            "w-full rounded-xl py-3.5 text-base font-bold tracking-wide transition",
+            loading
+              ? "cursor-not-allowed bg-white/20 text-white/60"
+              : "bg-gradient-to-r from-teal-400 to-cyan-500 text-slate-900 shadow-[0_0_30px_rgba(34,211,238,.45)] hover:brightness-110"
+          ].join(" ")}
+        >
+          {loading ? "ログイン中..." : "ログイン"}
+        </button>
+      </form>
+
+      <div className="mt-4 text-right">
+        <Link to="/reset" className="text-sm text-cyan-300/80 underline-offset-4 hover:text-cyan-300 hover:underline">
+          パスワードを忘れた方はこちら
+        </Link>
+      </div>
+    </div>
+  </div>
+
+  <div className="mt-3 text-center text-xs text-white/40 sm:hidden">© Anborco</div>
+</div>
+
           </div>
-
-          <div>
-            <label className="block mb-2 text-base font-semibold text-gray-700">
-              パスワード
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={loading}
-              className="w-full px-5 py-3 border border-gray-300 rounded-md text-lg"
-              placeholder="パスワードを入力"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className={`w-full py-3 text-lg font-bold rounded transition ${
-              loading
-                ? "bg-gray-400 cursor-not-allowed text-white"
-                : "bg-green-600 text-white hover:bg-green-700"
-            }`}
-          >
-            {loading ? "ログイン中..." : "ログイン"}
-          </button>
-        </form>
-
-        <div className="text-right mt-4">
-          <Link to="/reset" className="text-sm text-blue-600 hover:underline">
-            パスワードを忘れた方はこちら
-          </Link>
         </div>
       </div>
     </div>
-  );
+  </div>
+);
 };
-
 export default Login;

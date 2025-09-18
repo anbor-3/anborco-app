@@ -310,7 +310,7 @@ export default function AdminProjectList() {
 
   return (
     <div className="p-4 font-sans tracking-wide text-base text-[#1f2937]">
-      <h1 className="text-3xl font-bold mb-4 flex items-center gap-3 text-[#1f2937]">
+      <h1 className="text-3xl font-bold mb-4 flex items-center gap-3 text-white">
         <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h18M3 12h18M3 17h18" />
         </svg>

@@ -28,13 +28,13 @@ const CARD_THEME: Record<PlanId, {
   accent: string;     // 見出し/強調
   ring: string;       // hover ring
 }> = {
-  basic:     { header: "from-amber-50 to-amber-100",   divider: "border-amber-200",   accent: "text-amber-700",   ring: "ring-amber-300" },
-  advanced:  { header: "from-emerald-50 to-emerald-100", divider: "border-emerald-200", accent: "text-emerald-700", ring: "ring-emerald-300" },
-  pro:       { header: "from-sky-50 to-sky-100",       divider: "border-sky-200",     accent: "text-sky-700",     ring: "ring-sky-300" },
-  elite:     { header: "from-violet-50 to-violet-100", divider: "border-violet-200",  accent: "text-violet-700",  ring: "ring-violet-300" },
-  premium:   { header: "from-rose-50 to-rose-100",     divider: "border-rose-200",    accent: "text-rose-700",    ring: "ring-rose-300" },
-  unlimited: { header: "from-zinc-50 to-zinc-100",     divider: "border-zinc-200",    accent: "text-zinc-700",    ring: "ring-zinc-300" },
-};
+  basic:     { header: "from-amber-50 to-amber-100",   divider: "border-amber-300",   accent: "text-amber-700",   ring: "ring-amber-300" },
+  advanced:  { header: "from-emerald-50 to-emerald-100", divider: "border-emerald-300", accent: "text-emerald-700", ring: "ring-emerald-300" },
+  pro:       { header: "from-sky-50 to-sky-100",       divider: "border-sky-300",     accent: "text-sky-700",     ring: "ring-sky-300" },
+  elite:     { header: "from-violet-50 to-violet-100", divider: "border-violet-300",  accent: "text-violet-700",  ring: "ring-violet-300" },
+  premium:   { header: "from-rose-50 to-rose-100",     divider: "border-rose-300",    accent: "text-rose-700",    ring: "ring-rose-300" },
+  unlimited: { header: "from-zinc-50 to-zinc-100",     divider: "border-zinc-300",    accent: "text-zinc-700",    ring: "ring-zinc-300" },
+ };
 
 /** 表示順とラベル（左右に均等割り） */
 const FEATURE_LABELS: { key: keyof typeof PLAN_FEATURES["basic"]; label: string }[] = [
@@ -191,14 +191,14 @@ export default function AdminPlanChange() {
     <div className="mb-6 flex items-center gap-3">
       <div className="flex items-center gap-2">
         <Package className="text-emerald-600" size={20} />
-        <h1 className="text-xl md:text-2xl font-bold tracking-wide">プラン変更</h1>
+        <h1 className="text-xl md:text-2xl font-bold tracking-wide text-white">プラン変更</h1>
       </div>
-      <span className="text-sm text-gray-500 ml-2">— Plan Change —</span>
+      <span className="text-sm ml-2 text-white">— Plan Change —</span>
     </div>
   );
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="mx-auto max-w-6xl text-gray-900">
       <Header />
 
       {/* 注意文言 */}
@@ -258,7 +258,7 @@ function PlanCard({
         "h-full rounded-2xl border bg-gradient-to-b from-white to-gray-50",
         "shadow-[0_2px_12px_rgba(0,0,0,0.05)]",
         "hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)]",
-        "transition ring-0 hover:ring-2",
+        "transition ring-0 hover:ring-2 focus-within:ring-2",
         theme.ring,
       ].join(" ")}
     >
@@ -266,15 +266,15 @@ function PlanCard({
       <div className={`rounded-t-2xl bg-gradient-to-b ${theme.header} p-4 border-b ${theme.divider}`}>
         <div className="flex items-baseline justify-between">
           <div className="flex items-center gap-2">
-            <span className={`text-sm font-semibold ${theme.accent}`}>{pricing.jp}</span>
+           <span className={`text-base font-semibold ${theme.accent}`}>{pricing.jp}</span>
           </div>
-          <span className="text-xs tracking-wide text-gray-500">{pricing.en}</span>
+          <span className="text-xs tracking-wide text-gray-700">{pricing.en}</span>
         </div>
 
         <div className="mt-2 flex items-end justify-between">
           <div className="flex items-baseline gap-2">
-            <div className="text-2xl font-extrabold">{formatYen(pricing.price)}</div>
-            <div className="text-xs text-gray-500 pb-1">/ 月（税込）</div>
+            <div className="text-2xl font-extrabold text-gray-900">{formatYen(pricing.price)}</div>
+            <div className="text-xs text-gray-600 pb-1">/ 月（税込）</div>
           </div>
           {isCurrent && (
             <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">
@@ -297,11 +297,11 @@ function PlanCard({
             onClick={onChange}
             disabled={isCurrent}
             className={[
-              "h-10 w-full rounded-lg font-semibold transition",
-              isCurrent
-                ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-                : "bg-gray-900 text-white hover:bg-black",
-            ].join(" ")}
+              "h-10 w-full rounded-lg font-semibold transition focus-visible:outline-none",
+   isCurrent
+     ? "bg-gray-200 text-gray-600 cursor-not-allowed"
+     : "bg-gray-900 text-white hover:bg-black focus-visible:ring-2 focus-visible:ring-gray-900",
+ ].join(" ")}
           >
             {isCurrent ? "選択中" : "このプランに変更"}
           </button>
@@ -326,7 +326,7 @@ function FeatureColumn({
           ) : (
             <Minus size={16} className="mt-0.5 text-gray-400 shrink-0" />
           )}
-          <span className={it.enabled ? "text-gray-800" : "text-gray-400"}>{it.label}</span>
+          <span className={it.enabled ? "text-gray-800" : "text-gray-500"}>{it.label}</span>
         </li>
       ))}
     </ul>

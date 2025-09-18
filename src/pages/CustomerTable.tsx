@@ -120,8 +120,7 @@ export default function CustomerTable() {
   /* JSX ---------------------------------------------------------- */
   return (
     <div className="p-4 overflow-x-auto font-sans">
-      <h2 className="text-2xl font-extrabold mb-6 text-gray-700 tracking-wide">契約顧客一覧</h2>
-
+      
       {/* 新規登録 */}
       <button className="mb-3 px-4 py-1.5 bg-green-600 text-white rounded shadow" onClick={() => setShowModal(true)}>
         新規登録

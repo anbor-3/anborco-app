@@ -1,6 +1,5 @@
 "use client";
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import projectList from "../data/ProjectList";
 
 /* ========================= Types ========================= */
 
@@ -8,33 +7,10 @@ type DriverRow = { id: string; name: string };
 
 type ShiftItem = {
   project: string;
-  /** 単価 (円/日) – ProjectList.unitPrice をコピーして保持 */
+  /** 単価 (円/日) */
   unitPrice: number;
   /** 実績ステータス – 空＝通常 */
   status?: "normal" | "late" | "early" | "absent";
-};
-
-type Attachment = {
-  name: string;
-  url: string;
-  size: number;
-  type: string;
-  uploadedAt: string; // ISO
-};
-
-type Vehicle = {
-  id: number;
-  type: string;
-  number: string;
-  vin: string;
-  user: string;
-  startDate: string;
-  inspectionDate: string;
-  insuranceDate: string;
-  voluntaryDate: string;
-  attachments: Attachment[];
-  company: string;
-  customFields?: Record<string, string>;
 };
 
 // 1セルに複数案件を置けるので DayEntries は配列 or 単体 or undefined
@@ -64,8 +40,6 @@ const pickDrivers = (arr: any[], projectNames: Set<string>): DriverRow[] =>
       id: x.id ?? x.uid ?? x.loginId ?? x.driverId ?? "",
       name: x.name ?? x.fullName ?? x.displayName ?? x.driverName ?? "",
     }));
-
-const required = (s: string) => s.trim().length > 0;
 
 const getDaysOfMonth = (year: number, month: number) => {
   const result: { date: Date; day: number; dateStr: string }[] = [];
@@ -125,8 +99,8 @@ async function apiJSON<T>(
 
   const res = await fetch(url, {
     credentials: "include",
-    ...init,          // 先に展開
-    headers,          // 最後に上書き（型は常に PlainHeaders）
+    ...init, // 先に展開
+    headers, // 最後に上書き（型は常に PlainHeaders）
   });
 
   if (!res.ok) {
@@ -160,11 +134,10 @@ async function authHeader(): Promise<PlainHeaders> {
 
 const DriversAPI = {
   list: async (company: string) =>
-    apiJSON<DriverRow[]>(
-      `/api/drivers?company=${encodeURIComponent(company)}`,
-      { headers: await authHeader() }
-    ),
-};
+    apiJSON<DriverRow[]>(`/api/drivers?company=${encodeURIComponent(company)}`, {
+      headers: await authHeader(),
+    }),
+} as const;
 
 type ShiftsGetRes = { shifts: ShiftsState; confirmed: boolean; resultConfirmed: boolean };
 type ShiftsPutReq = { company: string; year: number; month: number; shifts: ShiftsState };
@@ -196,7 +169,7 @@ const ShiftsAPI = {
       headers: { "Content-Type": "application/json", ...(await authHeader()) },
       body: JSON.stringify({ company, year, month, value }),
     }),
-};
+} as const;
 
 const SettingsAPI = {
   getAbbr: async (company: string) =>
@@ -223,7 +196,18 @@ const SettingsAPI = {
       headers: { "Content-Type": "application/json", ...(await authHeader()) },
       body: JSON.stringify({ company, year, month, required: data }),
     }),
-};
+
+  /** 任意：サーバがあれば色/文字色も共有保存（無ければ使われません） */
+  putProjectStyles: async (
+    company: string,
+    styles: Array<{ name: string; color: string; textColor: string }>
+  ) =>
+    apiJSON<{ ok: true }>(`/api/settings/project-styles`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ company, styles }),
+    }),
+} as const;
 
 /* ========================= UI bits ========================= */
 
@@ -234,7 +218,8 @@ type StatusSelectProps = {
 };
 const StatusSelect: React.FC<StatusSelectProps> = ({ value, onChange, disabled }: StatusSelectProps) => (
   <select
-    className="result-select ml-1"
+    className="ml-1 border rounded px-1 py-0.5 text-xs bg-white text-slate-900
+               focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
     value={value ?? "normal"}
     onChange={(e) => onChange(e.target.value as ShiftItem["status"])}
     disabled={disabled}
@@ -258,7 +243,8 @@ const AdminShiftRegister: React.FC = () => {
 
   const makeKey = useCallback((base: string) => `${base}_${company}_${year}_${month}`, [company, year, month]);
 
-  const [projects, setProjects] = useState<any[]>(projectList);
+  // 初期は空配列：未登録案件を出さない
+  const [projects, setProjects] = useState<any[]>([]);
   const projectNameSet = useMemo(() => new Set(projects.map((p: any) => String(p.name))), [projects]);
   const projectPriceMap = useMemo(
     () => Object.fromEntries(projects.map((p: any) => [p.name, Number(p.unitPrice) || 0])) as Record<string, number>,
@@ -293,6 +279,30 @@ const AdminShiftRegister: React.FC = () => {
       setCompany("");
     }
   }, []);
+
+  // 追加：localStorage で取れない時のフォールバック（本番向け）
+  useEffect(() => {
+    if (company) return;
+    (async () => {
+      try {
+        const { getAuth } = await import("firebase/auth");
+        const result = await getAuth().currentUser?.getIdTokenResult?.();
+        const claim = (result?.claims as any)?.company;
+        if (claim) {
+          setCompany(String(claim));
+          localStorage.setItem("company", String(claim));
+          return;
+        }
+      } catch {}
+      try {
+        const me = await apiJSON<{ company?: string }>("/api/me");
+        if (me?.company) {
+          setCompany(String(me.company));
+          localStorage.setItem("company", String(me.company));
+        }
+      } catch {}
+    })();
+  }, [company]);
 
   /* --------- ドライバー一覧（共有） --------- */
   useEffect(() => {
@@ -329,7 +339,8 @@ const AdminShiftRegister: React.FC = () => {
       setProjects(fixed);
       localStorage.setItem("projectList", JSON.stringify(fixed));
     } else {
-      localStorage.setItem("projectList", JSON.stringify(projectList));
+      // 未登録なら表示ゼロ
+      setProjects([]);
     }
   }, []);
 
@@ -445,8 +456,28 @@ const AdminShiftRegister: React.FC = () => {
       return total + dayMinutes;
     }, 0);
 
+  // ▼ アクティブ案件（この月に必要人数がある or 実際に割当がある案件）
+  const isProjectActive = (p: any) =>
+    days.some((d) => {
+      const key = `${p.name}_${d.dateStr}`;
+      const required = requiredPersonnel[key] || 0;
+      if (required > 0) return true;
+      const assigned = getAssignedCount(d.dateStr, p.name);
+      return assigned > 0;
+    });
+
+  const activeProjects = useMemo(
+    () => projects.filter(isProjectActive),
+    [projects, days, requiredPersonnel, driverList, shifts]
+  );
+
   /* --------- 編集系（即サーバ保存 / 失敗時ローカルキャッシュ） --------- */
-  function handleChange(driverId: string, dateStr: string, projectName: string | null) {
+  function handleChange(
+    driverId: string,
+    dateStr: string,
+    projectName: string | null,
+    removeIndex?: number
+  ) {
     setShifts((prev) => {
       const oldList: ShiftItem[] = Array.isArray(prev?.[driverId]?.[dateStr])
         ? [...(prev[driverId][dateStr] as ShiftItem[])]
@@ -456,6 +487,8 @@ const AdminShiftRegister: React.FC = () => {
 
       const newList = projectName
         ? [...oldList, { project: projectName, unitPrice: projectPriceMap[projectName] ?? 0 }]
+        : removeIndex != null
+        ? oldList.filter((_, idx) => idx !== removeIndex)
         : oldList.slice(0, -1);
 
       const updated: ShiftsState = { ...prev, [driverId]: { ...prev[driverId], [dateStr]: newList } };
@@ -553,7 +586,7 @@ const AdminShiftRegister: React.FC = () => {
               className="h-6 w-24 rounded-md text-xs font-bold flex justify-center items-center cursor-pointer"
               style={{ backgroundColor: p.color, color: p.textColor }}
               title="クリックで削除"
-              onClick={() => handleChange(driverId, dateStr, null)}
+              onClick={() => handleChange(driverId, dateStr, null, i)}
             >
               {abbreviations[p.name] || p.name}
             </div>
@@ -572,7 +605,7 @@ const AdminShiftRegister: React.FC = () => {
           >
             <option value="">案件選択</option>
             {projects.map((p: any) => (
-              <option key={p.id} value={p.name}>
+              <option key={p.id ?? p.name} value={p.name}>
                 {abbreviations[p.name] || p.name}
               </option>
             ))}
@@ -594,8 +627,25 @@ const AdminShiftRegister: React.FC = () => {
 
   const handleSaveAbbreviations = async () => {
     try {
+      // 略称をサーバへ
       await SettingsAPI.putAbbr(company, abbreviations);
-      localStorage.setItem("projectAbbreviations", JSON.stringify(abbreviations)); // 任意キャッシュ
+
+      // （任意）色/文字色もサーバへ — エンドポイントが無ければ無視
+      const styles = projects.map((p: any) => ({
+        name: p.name,
+        color: p.color || "#cccccc",
+        textColor: p.textColor || "#000000",
+      }));
+      try {
+        await SettingsAPI.putProjectStyles(company, styles);
+      } catch {
+        // API未実装や404の場合は何もしない（localStorageには保存しておく）
+      }
+
+      // ローカルキャッシュ（任意）
+      localStorage.setItem("projectAbbreviations", JSON.stringify(abbreviations));
+      localStorage.setItem("projectList", JSON.stringify(projects));
+
       setShowAbbreviationModal(false);
     } catch {
       alert("略称の保存に失敗しました。ネットワークをご確認ください。");
@@ -759,14 +809,22 @@ const AdminShiftRegister: React.FC = () => {
       </h2>
 
       <div className="flex items-center mb-4 gap-2">
-        <select value={year} onChange={(e) => setYear(+e.target.value)} className="border px-2 py-1 rounded">
+        <select
+  value={year}
+  onChange={(e) => setYear(+e.target.value)}
+  className="border px-2 py-1 rounded bg-white text-black"
+>
           {years.map((y) => (
             <option key={y} value={y}>
               {y}年
             </option>
           ))}
         </select>
-        <select value={month} onChange={(e) => setMonth(+e.target.value)} className="border px-2 py-1 rounded">
+        <select
+  value={month}
+  onChange={(e) => setMonth(+e.target.value)}
+  className="border px-2 py-1 rounded bg-white text-black"
+>
           {months.map((m) => (
             <option key={m} value={m}>
               {m}月
@@ -843,7 +901,7 @@ const AdminShiftRegister: React.FC = () => {
 
               <tbody>
                 {projects.map((p) => (
-                  <tr key={p.id}>
+                  <tr key={p.id ?? p.name}>
                     <td className="border px-2 py-1 whitespace-nowrap">{p.name}</td>
                     <td className="border px-2 py-1">
                       <input
@@ -907,7 +965,7 @@ const AdminShiftRegister: React.FC = () => {
           <h3 className="font-bold mb-2">案件ごとの必要人数設定（日付別）</h3>
 
           {projects.map((project: any) => (
-            <div key={project.id} className="mb-4">
+            <div key={project.id ?? project.name} className="mb-4">
               <div className="flex items-center mb-2 gap-2">
                 <strong className="w-32">{project.name}</strong>
                 <input
@@ -993,32 +1051,52 @@ const AdminShiftRegister: React.FC = () => {
         </thead>
 
         <tbody>
-          {/* 人員過不足表示（案件ごとに縦行） */}
-          {projects.map((p: any) => (
-            <tr key={`shortage-${p.name}`} className="bg-yellow-50 text-xs text-center sticky top-[48px] z-20">
-              <td className="border px-1 py-1 font-semibold text-gray-700 whitespace-nowrap">
-                {abbreviations[p.name] || p.name}
-              </td>
-              {days.map((d) => {
-                const key = `${p.name}_${d.dateStr}`;
-                const required = requiredPersonnel[key] || 0;
-                const assigned = getAssignedCount(d.dateStr, p.name);
-                const diff = assigned - required;
-
-                let color = "text-black";
-                if (diff > 0) color = "text-blue-600";
-                if (diff < 0) color = "text-red-600";
-
-                return (
-                  <td key={`${key}-short`} className={`border px-1 py-1 text-xs ${color}`}>
-                    {diff === 0 ? "0" : diff > 0 ? `+${diff}` : `${diff}`}
+          {/* ▼ 案件（過不足）ブロック：アクティブ案件のみある時だけ表示 */}
+          {activeProjects.length > 0 && (
+            <>
+              <tr className="bg-amber-50 text-amber-900 text-xs">
+                <td className="border px-2 py-1 font-semibold">案件（過不足）</td>
+                {days.map((d) => (
+                  <td key={`lbl-${d.dateStr}`} className="border px-1 py-1 text-center">
+                    差分
                   </td>
-                );
-              })}
-              <th className="sticky top-[42px] z-10 bg-yellow-50 border px-1 py-1">-</th>
-            </tr>
-          ))}
+                ))}
+                <td className="border px-1 py-1">-</td>
+              </tr>
 
+              {activeProjects.map((p: any) => (
+                <tr key={`shortage-${p.name}`} className="bg-yellow-50 text-xs text-center sticky top-[48px] z-20">
+                  <td className="border px-1 py-1 font-semibold text-gray-700 whitespace-nowrap">
+                    {abbreviations[p.name] || p.name}
+                  </td>
+                  {days.map((d) => {
+                    const key = `${p.name}_${d.dateStr}`;
+                    const required = requiredPersonnel[key] || 0;
+                    const assigned = getAssignedCount(d.dateStr, p.name);
+                    const diff = assigned - required;
+                    const color = diff === 0 ? "text-black" : diff > 0 ? "text-blue-600" : "text-red-600";
+                    return (
+                      <td key={`${key}-short`} className={`border px-1 py-1 text-xs ${color}`}>
+                        {diff === 0 ? "0" : diff > 0 ? `+${diff}` : `${diff}`}
+                      </td>
+                    );
+                  })}
+                  <th className="sticky top-[42px] z-10 bg-yellow-50 border px-1 py-1">-</th>
+                </tr>
+              ))}
+
+              {/* ▼ 区切り：ここから氏名ブロック */}
+              <tr className="bg-slate-100 text-slate-700">
+                <td className="border px-2 py-1 font-semibold">氏名</td>
+                {days.map((d) => (
+                  <td key={`sep-${d.dateStr}`} className="border px-1 py-1" />
+                ))}
+                <td className="border px-1 py-1 font-semibold">合計時間</td>
+              </tr>
+            </>
+          )}
+
+          {/* ▼ ドライバー行 */}
           {driverList.length === 0 ? (
             <tr>
               <td className="border px-2 py-4 text-center text-gray-600" colSpan={days.length + 2}>

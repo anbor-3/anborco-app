@@ -1,4 +1,4 @@
-// src/components/ChatBox.tsx
+// src/components/ChatBox.tsx — 社内専用チャット（修正版／全文差し替え）
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -33,20 +33,20 @@ const ENABLE_XCOMPANY =
   false;
 
 /* ===================== Types ===================== */
-type ChatScope = "company" | "external"; // external は将来の会社間用（今は未使用）
+export type ChatScope = "company" | "external"; // external は将来の会社間用（今は未使用）
 
-type Message = {
+export type Message = {
   id: string;
-  sender: string;   // uid
-  time: string;     // YYYY-MM-DD HH:mm:ss（描画用）
-  createdAt?: any;  // Firestore Timestamp
+  sender: string; // uid
+  time: string; // YYYY-MM-DD HH:mm:ss（描画用）
+  createdAt?: any; // Firestore Timestamp
   text: string;
   imageUrl?: string | null;
 };
 
-type ChatTarget = {
-  id: string;       // chatId（group も DM も共通）
-  name: string;     // 表示名（group名 or 相手名）
+export type ChatTarget = {
+  id: string; // chatId（group も DM も共通）
+  name: string; // 表示名（group名 or 相手名）
   members: string[];
   isGroup: boolean;
   ownerId?: string; // グループオーナー
@@ -58,7 +58,7 @@ type ChatTarget = {
   messages: Message[];
 };
 
-type DirectoryUser = {
+export type DirectoryUser = {
   uid: string;
   name: string;
   email?: string;
@@ -77,8 +77,8 @@ chats:      /chats/{chatId} -> {
 messages:   /chats/{chatId}/messages/{messageId}
 
 DM chat id (新):
-  dm_${company}_${min(uid1, uid2)}_${max(uid1, uid2)}
-  ※ 旧: dm_${min}_${max} も読み込み時に自動移行チェック
+  dm_${company}_${"min(uid1, uid2)"}_${"max(uid1, uid2)"}
+  ※ 旧: dm_${"min"}_${"max"} も読み込み時に自動移行チェック
 
 ============================================================ */
 
@@ -105,7 +105,7 @@ const ChatBox = () => {
 
   /* ---------- Directory search (DM) ---------- */
   const [queryStr, setQueryStr] = useState("");
-  thead
+  // 💥 BUGFIX: stray token `thead` が原因でビルド不可 → 削除済み
   const [activeIdx, setActiveIdx] = useState<number>(-1);
 
   /* ---------- Unread badge map ---------- */
@@ -119,11 +119,35 @@ const ChatBox = () => {
       if (!user) return;
       setCurrentUid(user.uid);
 
-      const meSnap = await getDoc(doc(db, "users", user.uid));
+      const meRef = doc(db, "users", user.uid);
+      const meSnap = await getDoc(meRef);
       const me = meSnap.exists() ? (meSnap.data() as DirectoryUser) : undefined;
 
+      const resolvedCompany = me?.company || localStorage.getItem("company") || "default";
+      setCompany(resolvedCompany);
+
+      // プロフィール名を解決
       setCurrentUserName(me?.name || user.displayName || user.email || "Me");
-      setCompany(me?.company || localStorage.getItem("company") || "default");
+
+      // ✅ 自身の user ドキュメントが無ければ最低限作成（active: true を付与）
+      if (!meSnap.exists()) {
+        await setDoc(meRef, {
+          name: user.displayName || user.email || "ユーザー",
+          email: user.email || null,
+          role: "member",
+          company: resolvedCompany,
+          active: true,
+          createdAt: serverTimestamp(),
+        }).catch(() => {});
+      } else {
+        // company/active の欠落を補完
+        const patch: any = {};
+        if (!me?.company) patch.company = resolvedCompany;
+        if (me?.active !== true) patch.active = true;
+        if (Object.keys(patch).length) {
+          await updateDoc(meRef, patch).catch(() => {});
+        }
+      }
     });
     return () => unsub();
   }, []);
@@ -248,6 +272,11 @@ const ChatBox = () => {
     return () => unsub();
   }, [selectedChat?.id, currentUid, selectedChat?.scope]);
 
+  // ✅ 新着メッセージで自動スクロール
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [selectedChat?.messages?.length]);
+
   /* ===================== 未読件数（全チャット） ===================== */
   useEffect(() => {
     if (!currentUid) return;
@@ -288,7 +317,7 @@ const ChatBox = () => {
 
   const dmIdLegacy = (a: string, b: string) => (a < b ? `dm_${a}_${b}` : `dm_${b}_${a}`);
   const dmIdOf = (a: string, b: string, co: string) =>
-    (a < b ? `dm_${co}_${a}_${b}` : `dm_${co}_${b}_${a}`);
+    a < b ? `dm_${co}_${a}_${b}` : `dm_${co}_${b}_${a}`;
 
   const ensureDmChatAndOpen = async (partner: DirectoryUser) => {
     if (!currentUid || !company) return;
@@ -358,7 +387,7 @@ const ChatBox = () => {
       .replace(/[ぁ-ん]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 0x60));
 
   const filteredDirectory = useMemo(() => {
-    if (!queryStr.trim()) return [];
+    if (!queryStr.trim()) return [] as DirectoryUser[];
     const Q = normStr(queryStr);
     return directory.filter(
       (u) =>
@@ -379,7 +408,7 @@ const ChatBox = () => {
       ownerId: currentUid,
       members: [currentUid],
       company,
-      scope: "company",            // ★ 社内限定
+      scope: "company", // ★ 社内限定
       allowedCompanies: [company], // ★ 将来の会社間用フィールド
       lastReadAt: { [currentUid]: serverTimestamp() },
       createdAt: serverTimestamp(),
@@ -450,6 +479,7 @@ const ChatBox = () => {
         [`lastReadAt.${currentUid}`]: serverTimestamp(),
       }).catch(() => {});
     }
+    setEditIndex(null);
     setSelectedChat({ ...chat, messages: chat.messages ?? [] });
   };
 
@@ -458,14 +488,22 @@ const ChatBox = () => {
     if (!selectedChat || (!newMessage.trim() && !file) || !currentUid) return;
 
     // スコープ/メンバー確認（保険）
-    if ((selectedChat.scope && selectedChat.scope !== "company" && !ENABLE_XCOMPANY) ||
-        !selectedChat.members.includes(currentUid)) {
+    if (
+      (selectedChat.scope && selectedChat.scope !== "company" && !ENABLE_XCOMPANY) ||
+      !selectedChat.members.includes(currentUid)
+    ) {
       alert("このチャットには投稿できません。");
       return;
     }
 
+    // 画像バリデーション（任意の上限。例: 5MB）
     let imageUrl: string | null = null;
     if (file) {
+      const MAX = 5 * 1024 * 1024;
+      if (file.size > MAX) {
+        alert("画像サイズが大きすぎます（5MBまで）");
+        return;
+      }
       const objectPath = `chat_images/${company}/${selectedChat.id}/${Date.now()}_${file.name}`;
       const snap = await uploadBytes(sRef(storage, objectPath), file);
       imageUrl = await getDownloadURL(snap.ref);
@@ -487,9 +525,13 @@ const ChatBox = () => {
   };
 
   const editMessage = async () => {
-    if (editIndex === null || !selectedChat) return;
+    if (editIndex === null || !selectedChat || !currentUid) return;
     const msg = selectedChat.messages[editIndex];
     if (!msg) return;
+    if (msg.sender !== currentUid) {
+      alert("自分のメッセージのみ編集できます");
+      return;
+    }
     await updateDoc(doc(db, "chats", selectedChat.id, "messages", msg.id), {
       text: newMessage,
     });
@@ -498,9 +540,13 @@ const ChatBox = () => {
   };
 
   const deleteMessage = async (idx: number) => {
-    if (!selectedChat) return;
+    if (!selectedChat || !currentUid) return;
     const msg = selectedChat.messages[idx];
     if (!msg) return;
+    if (msg.sender !== currentUid) {
+      alert("自分のメッセージのみ削除できます");
+      return;
+    }
     // 論理削除（痕跡は残す）
     await updateDoc(doc(db, "chats", selectedChat.id, "messages", msg.id), {
       text: "（削除されました）",
@@ -594,7 +640,9 @@ const ChatBox = () => {
           <h3 className="mt-2 mb-1 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
             グループ
           </h3>
-          {groups.length === 0 && <div className="text-zinc-400 text-sm mb-2">グループはまだありません</div>}
+          {groups.length === 0 && (
+            <div className="text-zinc-400 text-sm mb-2">グループはまだありません</div>
+          )}
           {groups.map((group) => (
             <div
               key={group.id}
@@ -616,7 +664,9 @@ const ChatBox = () => {
 
           {/* DMs */}
           <h3 className="mt-4 mb-1 text-xs font-semibold text-zinc-400 uppercase tracking-wider">個人チャット</h3>
-          {dms.length === 0 && <div className="text-zinc-400 text-sm">検索からDMを開始できます</div>}
+          {dms.length === 0 && (
+            <div className="text-zinc-400 text-sm">検索からDMを開始できます</div>
+          )}
           {dms.map((dm) => (
             <div
               key={dm.id}
@@ -771,10 +821,19 @@ const ChatBox = () => {
           <div className="p-4 border-t flex items-center gap-2">
             <input
               className="flex-1 border rounded px-3 py-2"
-              placeholder="メッセージを入力..."
+              placeholder={editIndex !== null ? "メッセージを編集..." : "メッセージを入力..."}
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && (editIndex !== null ? editMessage() : sendMessage())}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && editIndex !== null) {
+                  setEditIndex(null);
+                  setNewMessage("");
+                  return;
+                }
+                if (e.key === "Enter") {
+                  editIndex !== null ? editMessage() : sendMessage();
+                }
+              }}
             />
             <label className="inline-flex items-center gap-2 cursor-pointer text-gray-600 hover:text-gray-800">
               <ImagePlus className="h-5 w-5" />
@@ -790,7 +849,7 @@ const ChatBox = () => {
               className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center gap-2"
             >
               <Send className="h-4 w-4" />
-              送信
+              {editIndex !== null ? "更新" : "送信"}
             </button>
           </div>
         )}

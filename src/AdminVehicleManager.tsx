@@ -536,263 +536,295 @@ const VehicleManager: React.FC = () => {
   if (loading) return <div className="p-6">読み込み中...</div>;
 
   return (
-    <div className="absolute top-16 left-60 right-0 bottom-0 bg-white px-8 py-6 overflow-auto">
-      <h2 className="text-2xl font-bold mb-4 flex items-center">
-        <span role="img" aria-label="truck" className="text-blue-600 text-3xl mr-2">🚚</span>
-        車両管理 <span className="text-sm text-gray-500 ml-2">-Vehicle Management-</span>
-      </h2>
-
-      {error && <div className="mb-4 p-3 rounded bg-red-50 text-red-700 text-sm">{error}</div>}
-      {info && <div className="mb-4 p-3 rounded bg-green-50 text-green-700 text-sm">{info}</div>}
+    <div className="h-full w-full bg-white overflow-auto p-0">
+      <div className="px-10 pt-8 pb-4">
+  <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 to-indigo-50 p-4 ring-1 ring-black/5">
+    <div className="flex items-center justify-between gap-4 flex-wrap">
+      <div className="flex items-center gap-3 min-w-0">
+        <span role="img" aria-label="truck" className="text-blue-600 text-3xl">🚚</span>
+        <div className="min-w-0">
+          <h1 className="text-2xl md:text-3xl font-bold text-slate-900 truncate">車両管理</h1>
+          <div className="text-sm md:text-base text-slate-600">- Vehicle Management -</div>
+        </div>
+      </div>
 
       <button
         type="button"
-        className="mb-6 w-48 py-3 bg-blue-600 text-white rounded text-lg font-semibold hover:bg-blue-700 disabled:opacity-60"
+        className="mt-2 md:mt-0 mb-0 w-48 py-3 bg-blue-600 text-white rounded-xl text-lg font-semibold shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
         onClick={handleAdd}
       >
         車両追加
       </button>
+    </div>
 
-      <div className="w-full flex-1 overflow-auto">
-        <table className="w-full table-auto border border-gray-300 shadow rounded-lg text-sm">
-          <thead className="bg-blue-100 text-gray-800 border-b border-gray-400">
-            <tr>
-              <th className="px-4 py-3 text-left border-r border-gray-300 whitespace-nowrap">操作</th>
-              <th className="px-4 py-3 text-left border-r border-gray-300 whitespace-nowrap">車種</th>
-              <th className="px-4 py-3 text-left border-r border-gray-300 whitespace-nowrap">ナンバー</th>
-              <th className="px-4 py-3 text-left border-r border-gray-300 whitespace-nowrap">車台番号</th>
-              <th className="px-4 py-3 text-left border-r border-gray-300 whitespace-nowrap">使用者</th>
-              <th className="px-4 py-3 text-left border-r border-gray-300 whitespace-nowrap">使用開始日</th>
-              <th className="px-4 py-3 text-left border-r border-gray-300 whitespace-nowrap">車検有効期限</th>
-              <th className="px-4 py-3 text-left border-r border-gray-300 whitespace-nowrap">自賠責有効期限</th>
-              <th className="px-4 py-3 text-left border-r border-gray-300 whitespace-nowrap">任意保険有効期限</th>
-              <th className="px-4 py-3 text-left whitespace-nowrap">添付ファイル</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white">
-            {vehicles.map((v, idx) => {
-              const isEditing = editingId === v.id;
-              const isSaving = savingId === v.id;
-              return (
-                <tr
-                  key={v.id}
-                  className={`${idx % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-blue-50 border-b border-gray-200`}
-                >
-                  <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
-                    {isEditing ? (
-                      <>
+    {/* 通知エリア（タイトルプレート内に収めて視線移動を最小化） */}
+    {error && (
+      <div className="mt-4 p-3 rounded-lg bg-red-600/10 text-red-800 text-sm border border-red-200">
+        {error}
+      </div>
+    )}
+    {info && (
+      <div className="mt-2 p-3 rounded-lg bg-emerald-600/10 text-emerald-800 text-sm border border-emerald-200">
+        {info}
+      </div>
+    )}
+  </div>
+</div>
+
+      {/* ▼ テーブル：ヘッダーが切れないように外側余白を通常化（表の中身は変更なし） */}
+<div className="px-10 pb-8">
+  <div className="w-full overflow-x-auto">
+    <table className="w-full table-auto bg-white text-slate-900 border border-slate-200 shadow-xl rounded-xl text-sm">
+      <thead className="z-10 bg-slate-900 text-white shadow-sm">
+        <tr>
+           <th className="sticky top-0 bg-slate-900 px-4 py-3 text-left border-r border-slate-700/60 whitespace-nowrap font-semibold tracking-wide">操作</th>
+          <th className="px-4 py-3 text-left border-r border-slate-700/60 whitespace-nowrap font-semibold tracking-wide">車種</th>
+          <th className="px-4 py-3 text-left border-r border-slate-700/60 whitespace-nowrap font-semibold tracking-wide">ナンバー</th>
+          <th className="px-4 py-3 text-left border-r border-slate-700/60 whitespace-nowrap font-semibold tracking-wide">車台番号</th>
+          <th className="px-4 py-3 text-left border-r border-slate-700/60 whitespace-nowrap font-semibold tracking-wide">使用者</th>
+          <th className="px-4 py-3 text-left border-r border-slate-700/60 whitespace-nowrap font-semibold tracking-wide">使用開始日</th>
+          <th className="px-4 py-3 text-left border-r border-slate-700/60 whitespace-nowrap font-semibold tracking-wide">車検有効期限</th>
+          <th className="px-4 py-3 text-left border-r border-slate-700/60 whitespace-nowrap font-semibold tracking-wide">自賠責有効期限</th>
+          <th className="px-4 py-3 text-left whitespace-nowrap font-semibold tracking-wide">任意保険有効期限</th>
+          <th className="px-4 py-3 text-left whitespace-nowrap font-semibold tracking-wide">添付ファイル</th>
+        </tr>
+      </thead>
+      <tbody className="bg-white">
+        {vehicles.map((v, idx) => {
+          const isEditing = editingId === v.id;
+          const isSaving = savingId === v.id;
+          return (
+             <tr
+        key={v.id}
+        className={`${
+          idx % 2 === 0 ? "bg-white" : "bg-slate-50"
+        } hover:bg-sky-50 border-b border-slate-200 transition-colors
+           ${isEditing ? "ring-1 ring-sky-400/40" : ""}`}
+      >
+              <td className="px-4 py-2 text-sm border-r border-slate-200 whitespace-nowrap">
+                {isEditing ? (
+                  <>
+                    <button
+                      className="bg-green-600 text-white px-2 py-1 rounded mr-2 disabled:opacity-60"
+                      disabled={isSaving}
+                      onClick={() => handleSave(v.id)}
+                    >
+                      {isSaving ? "保存中..." : "保存"}
+                    </button>
+                    <button
+                      className="bg-gray-500 text-white px-2 py-1 rounded"
+                      disabled={isSaving}
+                      onClick={() => {
+                        if (v.id < 0 && !v.type && !v.number && !v.vin) {
+                          setVehicles((prev) => prev.filter((x) => x.id !== v.id));
+                        }
+                        setEditingId(null);
+                      }}
+                    >
+                      キャンセル
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className="bg-yellow-500 text-white px-2 py-1 rounded mr-2"
+                      onClick={() => setEditingId(v.id)}
+                    >
+                      編集
+                    </button>
+                    <button
+                       className="bg-rose-600 text-white px-2 py-1 rounded-lg shadow hover:bg-rose-700
+             focus:outline-none focus:ring-2 focus:ring-rose-400/60 disabled:opacity-60"
+  disabled={isSaving}
+>
+                      削除
+                    </button>
+                  </>
+                )}
+              </td>
+
+              {/* 車種 */}
+              <td className="px-4 py-2 text-sm border-r border-slate-200 whitespace-nowrap">
+                {isEditing ? (
+                  <input
+                    autoFocus
+                    className="w-full px-2 py-1 border rounded bg-white text-slate-900 placeholder-slate-500
+             focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                    value={v.type}
+                    onChange={(e) => patchVehicle(v.id, { type: e.target.value })}
+                  />
+                ) : (
+                  v.type || "-"
+                )}
+              </td>
+
+              {/* ナンバー */}
+              <td className="px-4 py-2 text-sm border-r border-slate-200 whitespace-nowrap">
+                {isEditing ? (
+                  <input
+                    className="w-full px-2 py-1 border rounded bg-white text-slate-900 placeholder-slate-500
+             focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                    value={v.number}
+                    onChange={(e) => patchVehicle(v.id, { number: e.target.value })}
+                  />
+                ) : (
+                  v.number || "-"
+                )}
+              </td>
+
+              {/* 車台番号 */}
+              <td className="px-4 py-2 text-sm border-r border-slate-200 whitespace-nowrap">
+                {isEditing ? (
+                  <input
+                    className="w-full px-2 py-1 border rounded bg-white text-slate-900 placeholder-slate-500
+             focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                    value={v.vin}
+                    onChange={(e) => patchVehicle(v.id, { vin: e.target.value })}
+                  />
+                ) : (
+                  v.vin || "-"
+                )}
+              </td>
+
+              {/* 使用者 */}
+              <td className="px-4 py-2 text-sm border-r border-slate-200 whitespace-nowrap">
+                {isEditing ? (
+                  <select
+                    className="w-full px-2 py-1 border rounded bg-white text-slate-900 placeholder-slate-500
+             focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                    value={v.user}
+                    onChange={(e) => patchVehicle(v.id, { user: e.target.value })}
+                  >
+                    <option value="">—選択—</option>
+                    {driverOptions.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  v.user || "-"
+                )}
+              </td>
+
+              {/* 使用開始日 */}
+              <td className="px-4 py-2 text-sm border-r border-slate-200 whitespace-nowrap">
+                {isEditing ? (
+                  <input
+                    type="date"
+                    className="w-full px-2 py-1 border rounded bg-white text-slate-900 placeholder-slate-500
+             focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                    value={v.startDate || ""}
+                    onChange={(e) => patchVehicle(v.id, { startDate: e.target.value })}
+                  />
+                ) : (
+                  v.startDate || "-"
+                )}
+              </td>
+
+              {/* 車検 */}
+              <td className="px-4 py-2 text-sm border-r border-slate-200 whitespace-nowrap">
+                {isEditing ? (
+                  <input
+                    type="date"
+                    className="w-full px-2 py-1 border rounded bg-white text-slate-900 placeholder-slate-500
+             focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                    value={v.inspectionDate || ""}
+                    onChange={(e) => patchVehicle(v.id, { inspectionDate: e.target.value })}
+                  />
+                ) : (
+                  v.inspectionDate || "-"
+                )}
+              </td>
+
+              {/* 自賠責 */}
+              <td className="px-4 py-2 text-sm border-r border-slate-200 whitespace-nowrap">
+                {isEditing ? (
+                  <input
+                    type="date"
+                    className="w-full px-2 py-1 border rounded bg-white text-slate-900 placeholder-slate-500
+             focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                    value={v.insuranceDate || ""}
+                    onChange={(e) => patchVehicle(v.id, { insuranceDate: e.target.value })}
+                  />
+                ) : (
+                  v.insuranceDate || "-"
+                )}
+              </td>
+
+              {/* 任意保険 */}
+              <td className="px-4 py-2 text-sm border-r border-slate-200 whitespace-nowrap">
+                {isEditing ? (
+                  <input
+                    type="date"
+                    className="w-full px-2 py-1 border rounded bg-white text-slate-900 placeholder-slate-500
+             focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                    value={v.voluntaryDate || ""}
+                    onChange={(e) => patchVehicle(v.id, { voluntaryDate: e.target.value })}
+                  />
+                ) : (
+                  v.voluntaryDate || "-"
+                )}
+              </td>
+
+              {/* 添付 */}
+              <td className="px-4 py-2 text-sm whitespace-nowrap">
+                {isEditing ? (
+                  <div className="space-y-1">
+                    {v.attachments?.map((att, i) => (
+                      <div key={i} className="flex items-center justify-between">
                         <button
-                          className="bg-green-600 text-white px-2 py-1 rounded mr-2 disabled:opacity-60"
-                          disabled={isSaving}
-                          onClick={() => handleSave(v.id)}
+                          className="text-blue-600 underline text-xs mr-2"
+                          onClick={() => openAttachment(att)}
+                          type="button"
                         >
-                          {isSaving ? "保存中..." : "保存"}
+                          {att.name}
                         </button>
                         <button
-                          className="bg-gray-500 text-white px-2 py-1 rounded"
-                          disabled={isSaving}
-                          onClick={() => {
-                            if (v.id < 0 && !v.type && !v.number && !v.vin) {
-                              setVehicles((prev) => prev.filter((x) => x.id !== v.id));
-                            }
-                            setEditingId(null);
-                          }}
-                        >
-                          キャンセル
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          className="bg-yellow-500 text-white px-2 py-1 rounded mr-2"
-                          onClick={() => setEditingId(v.id)}
-                        >
-                          編集
-                        </button>
-                        <button
-                          className="bg-red-600 text-white px-2 py-1 rounded disabled:opacity-60"
-                          disabled={isSaving}
-                          onClick={() => handleDelete(v.id)}
+                          className="text-red-500 text-xs"
+                          onClick={() => removeAttachment(v.id, i)}
+                          type="button"
                         >
                           削除
                         </button>
-                      </>
-                    )}
-                  </td>
-
-                  {/* 車種 */}
-                  <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
-                    {isEditing ? (
-                      <input
-                        autoFocus
-                        className="w-full px-2 py-1 border rounded"
-                        value={v.type}
-                        onChange={(e) => patchVehicle(v.id, { type: e.target.value })}
-                      />
-                    ) : (
-                      v.type || "-"
-                    )}
-                  </td>
-
-                  {/* ナンバー */}
-                  <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
-                    {isEditing ? (
-                      <input
-                        className="w-full px-2 py-1 border rounded"
-                        value={v.number}
-                        onChange={(e) => patchVehicle(v.id, { number: e.target.value })}
-                      />
-                    ) : (
-                      v.number || "-"
-                    )}
-                  </td>
-
-                  {/* 車台番号 */}
-                  <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
-                    {isEditing ? (
-                      <input
-                        className="w-full px-2 py-1 border rounded"
-                        value={v.vin}
-                        onChange={(e) => patchVehicle(v.id, { vin: e.target.value })}
-                      />
-                    ) : (
-                      v.vin || "-"
-                    )}
-                  </td>
-
-                  {/* 使用者 */}
-                  <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
-                    {isEditing ? (
-                      <select
-                        className="w-full px-2 py-1 border rounded"
-                        value={v.user}
-                        onChange={(e) => patchVehicle(v.id, { user: e.target.value })}
-                      >
-                        <option value="">—選択—</option>
-                        {driverOptions.map((name) => (
-                          <option key={name} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      v.user || "-"
-                    )}
-                  </td>
-
-                  {/* 使用開始日 */}
-                  <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
-                    {isEditing ? (
-                      <input
-                        type="date"
-                        className="w-full px-2 py-1 border rounded"
-                        value={v.startDate || ""}
-                        onChange={(e) => patchVehicle(v.id, { startDate: e.target.value })}
-                      />
-                    ) : (
-                      v.startDate || "-"
-                    )}
-                  </td>
-
-                  {/* 車検 */}
-                  <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
-                    {isEditing ? (
-                      <input
-                        type="date"
-                        className="w-full px-2 py-1 border rounded"
-                        value={v.inspectionDate || ""}
-                        onChange={(e) => patchVehicle(v.id, { inspectionDate: e.target.value })}
-                      />
-                    ) : (
-                      v.inspectionDate || "-"
-                    )}
-                  </td>
-
-                  {/* 自賠責 */}
-                  <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
-                    {isEditing ? (
-                      <input
-                        type="date"
-                        className="w-full px-2 py-1 border rounded"
-                        value={v.insuranceDate || ""}
-                        onChange={(e) => patchVehicle(v.id, { insuranceDate: e.target.value })}
-                      />
-                    ) : (
-                      v.insuranceDate || "-"
-                    )}
-                  </td>
-
-                  {/* 任意保険 */}
-                  <td className="px-4 py-2 text-sm border-r border-gray-200 whitespace-nowrap">
-                    {isEditing ? (
-                      <input
-                        type="date"
-                        className="w-full px-2 py-1 border rounded"
-                        value={v.voluntaryDate || ""}
-                        onChange={(e) => patchVehicle(v.id, { voluntaryDate: e.target.value })}
-                      />
-                    ) : (
-                      v.voluntaryDate || "-"
-                    )}
-                  </td>
-
-                  {/* 添付 */}
-                  <td className="px-4 py-2 text-sm whitespace-nowrap">
-                    {isEditing ? (
-                      <div className="space-y-1">
-                        {v.attachments?.map((att, i) => (
-                          <div key={i} className="flex items-center justify-between">
-                            <button
-                              className="text-blue-600 underline text-xs mr-2"
-                              onClick={() => openAttachment(att)}
-                              type="button"
-                            >
-                              {att.name}
-                            </button>
-                            <button
-                              className="text-red-500 text-xs"
-                              onClick={() => removeAttachment(v.id, i)}
-                              type="button"
-                            >
-                              削除
-                            </button>
-                          </div>
-                        ))}
-                        <input
-                          type="file"
-                          multiple
-                          accept="application/pdf,image/*"
-                          onChange={(e) => handleFiles(v.id, e.target.files)}
-                          className="text-xs mt-1"
-                        />
-                        <p className="text-xs text-gray-500">最大10ファイルまで添付可能</p>
                       </div>
+                    ))}
+                    <input
+                      type="file"
+                      multiple
+                      accept="application/pdf,image/*"
+                      onChange={(e) => handleFiles(v.id, e.target.files)}
+                      className="text-xs mt-1"
+                    />
+                    <p className="text-xs text-gray-500">最大10ファイルまで添付可能</p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {v.attachments?.length ? (
+                      v.attachments.map((att, i) => (
+                        <div key={i}>
+                          <button
+                            className="text-blue-600 underline text-xs"
+                            onClick={() => openAttachment(att)}
+                            type="button"
+                          >
+                            {att.name}
+                          </button>
+                        </div>
+                      ))
                     ) : (
-                      <div className="space-y-1">
-                        {v.attachments?.length ? (
-                          v.attachments.map((att, i) => (
-                            <div key={i}>
-                              <button
-                                className="text-blue-600 underline text-xs"
-                                onClick={() => openAttachment(att)}
-                                type="button"
-                              >
-                                {att.name}
-                              </button>
-                            </div>
-                          ))
-                        ) : (
-                          "添付なし"
-                        )}
-                      </div>
+                      "添付なし"
                     )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                  </div>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+</div>
     </div>
   );
 };

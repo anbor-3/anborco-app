@@ -150,7 +150,7 @@ export default function DriverDashboard() {
   /* ===== PDF化される領域 ===== */
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-800">
+      <h1 className="text-2xl font-bold text-white-800">
         🚚 日報提出 <span className="text-sm text-gray-500">- Driver Dashboard -</span>
       </h1>
 

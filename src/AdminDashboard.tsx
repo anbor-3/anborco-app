@@ -91,7 +91,7 @@ export default function AdminDashboard() {
   }, [today, currentMonth]);
 
   return (
-    <div className="p-8 bg-gray-50 min-h-screen space-y-10">
+    <div className="p-8 bg-black-50 min-h-screen space-y-10">
       <h1 className="text-3xl font-bold">📊 管理者ダッシュボード</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">

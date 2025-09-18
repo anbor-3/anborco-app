@@ -423,7 +423,7 @@ export default function SystemSettings() {
       </h1>
 
       {/* スコープ切替 */}
-      <div className="bg-white p-4 rounded shadow flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div className="bg-white text-gray-900 p-4 rounded shadow flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <div className="font-semibold">適用スコープ / Scope</div>
           <div className="text-xs text-gray-500">会社共有設定（Company-wide）と自分だけの上書き（My overrides）を切替</div>
@@ -476,43 +476,47 @@ export default function SystemSettings() {
       )}
 
       {/* 通知設定 - Notifications */}
-      <div className="bg-white p-4 rounded shadow">
-        <label className="block mb-2 font-semibold">
-          通知設定 <span className="ml-2 text-xs text-gray-500">- Notifications -</span>
-        </label>
+      <div className="bg-white text-gray-900 p-4 rounded shadow">
+        <label className="block mb-2 font-semibold text-gray-900">
+  通知設定 <span className="ml-2 text-xs text-black">- Notifications -</span>
+</label>
         <select
-          disabled={editingReadOnly}
-          className="border rounded p-2 w-full"
-          value={(scope === "company" ? baseSettings : (userOverrides.notificationSetting ?? settings.notificationSetting))}
-          onChange={(e) =>
-            savePatch({
-              notificationSetting: e.target.value as ComplianceSettings["notificationSetting"],
-            })
-          }
-        >
-          <option>全員に通知</option>
-          <option>管理者のみ</option>
-          <option>通知しない</option>
-        </select>
+  disabled={editingReadOnly}
+  className="border border-gray-300 rounded p-2 w-full bg-white text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+  value={
+    scope === "company"
+      ? baseSettings.notificationSetting
+      : (userOverrides.notificationSetting ?? settings.notificationSetting)
+  }
+  onChange={(e) =>
+    savePatch({
+      notificationSetting: e.target.value as ComplianceSettings["notificationSetting"],
+    })
+  }
+>
+  <option value="全員に通知">全員に通知</option>
+  <option value="管理者のみ">管理者のみ</option>
+  <option value="通知しない">通知しない</option>
+</select>
         <p className="text-xs text-gray-500 mt-1">
           表示は適用結果（会社＋自分）の値、保存は現在のスコープに入ります。
         </p>
       </div>
 
       {/* タスクテンプレ - Task Templates */}
-      <div className="bg-white p-4 rounded shadow">
+      <div className="bg-white text-gray-900 p-4 rounded shadow">
         <h2 className="text-lg font-semibold mb-2">
-          🧩 対応タスクリスト・テンプレ設定
-          <span className="ml-2 text-xs text-gray-500">- Task Templates -</span>
-        </h2>
+  🧩 対応タスクリスト・テンプレ設定
+  <span className="ml-2 text-xs text-black">- Task Templates -</span>
+</h2>
         <p className="text-xs text-gray-500 mb-3">
           画面の一覧は「適用結果（会社＋自分）」です。追加・編集・並び替え・削除は現在のスコープに対して行われます。
         </p>
 
         <div className="overflow-x-auto">
-          <table className="min-w-full table-auto border border-gray-300 text-sm">
+          <table className="min-w-full table-auto border border-gray-300 text-sm text-gray-900">
             <thead>
-              <tr className="bg-gray-100">
+              <tr className="bg-gray-100 text-gray-900">
                 <th className="px-2 py-2 border w-16">有効</th>
                 <th className="px-2 py-2 border">タスク名</th>
                 <th className="px-2 py-2 border w-28">法令タグ</th>
@@ -542,7 +546,7 @@ export default function SystemSettings() {
                     <div className="inline-flex gap-2">
                       <button
                         disabled={editingReadOnly}
-                        className="px-2 py-1 border rounded"
+                        className="px-2 py-1 border border-gray-300 rounded text-gray-700 hover:bg-gray-100"
                         onClick={() => moveTemplate(t.id, -1)}
                         title="上へ"
                       >
@@ -550,7 +554,7 @@ export default function SystemSettings() {
                       </button>
                       <button
                         disabled={editingReadOnly}
-                        className="px-2 py-1 border rounded"
+                        className="px-2 py-1 border border-gray-300 rounded text-gray-700 hover:bg-gray-100"
                         onClick={() => moveTemplate(t.id, +1)}
                         title="下へ"
                       >
@@ -585,7 +589,7 @@ export default function SystemSettings() {
         <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mt-3">
           <input
             disabled={editingReadOnly}
-            className="border rounded px-3 py-2 md:col-span-2"
+            className="border border-gray-300 rounded px-3 py-2 md:col-span-2 bg-white text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             placeholder="タスク名（必須）"
             value={newTpl.label || ""}
             onChange={(e) => setNewTpl((s) => ({ ...s, label: e.target.value }))}
@@ -736,10 +740,10 @@ function FieldEditor(props: {
   const [value, setValue] = useState("");
 
   return (
-    <div className="bg-white p-4 rounded shadow">
+    <div className="bg-white text-gray-900 p-4 rounded shadow">
       <h2 className="text-lg font-semibold mb-2">
-        {title} <span className="ml-2 text-xs text-gray-500">{en}</span>
-      </h2>
+  {title} <span className="ml-2 text-xs text-black">{en}</span>
+</h2>
       <ul className="space-y-2 mb-4">
         {items.length === 0 && <li className="text-gray-500">項目はまだありません</li>}
         {items.map((f, idx) => (
@@ -762,7 +766,7 @@ function FieldEditor(props: {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder={placeholder}
-          className="border px-3 py-2 rounded w-full"
+          className="border border-gray-300 px-3 py-2 rounded w-full bg-white text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
         />
         <button
           disabled={readOnly}

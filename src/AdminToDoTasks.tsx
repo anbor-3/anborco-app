@@ -312,14 +312,14 @@ export default function AdminToDoTasks() {
       </h1>
 
       {/* 📰 最新ニュース */}
-      <section className="bg-white rounded-xl shadow p-5">
+      <section className="bg-white text-gray-900 rounded-xl shadow p-5">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-semibold mb-3">📰 最新ニュース（燃料・運送の法令等）</h2>
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500">{allNews.length}件</span>
             <button
               onClick={loadNews}
-              className="inline-flex items-center gap-1 px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm"
+              className="inline-flex items-center gap-1 px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               title="手動更新"
             >
               <RotateCw size={16} /> 更新
@@ -330,7 +330,7 @@ export default function AdminToDoTasks() {
         {loading && <p className="text-gray-500">読み込み中…</p>}
         {err && <p className="text-red-600">{err}</p>}
 
-        <ul className="divide-y">
+        <ul className="divide-y divide-gray-200 text-gray-900">
           {allNews.slice(0, Math.max(visible, VISIBLE_DEFAULT)).map((n, i) => (
             <li key={`${n.link}-${i}`} className="py-3">
               <a
@@ -357,7 +357,7 @@ export default function AdminToDoTasks() {
           {Math.max(visible, VISIBLE_DEFAULT) < allNews.length && (
             <button
               onClick={() => setVisible((v) => v + LOAD_MORE_STEP)}
-              className="px-3 py-1.5 text-sm rounded bg-gray-100 hover:bg-gray-200"
+              className="px-3 py-1.5 text-sm rounded bg-gray-100 hover:bg-gray-200 text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               もっと見る（+{LOAD_MORE_STEP}件）
             </button>
@@ -365,7 +365,7 @@ export default function AdminToDoTasks() {
           {allNews.length > 0 && Math.max(visible, VISIBLE_DEFAULT) < allNews.length && (
             <button
               onClick={() => setVisible(9999)}
-              className="px-3 py-1.5 text-sm rounded bg-gray-100 hover:bg-gray-200"
+              className="px-3 py-1.5 text-sm rounded bg-gray-100 hover:bg-gray-200 text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               すべて表示（{allNews.length}件）
             </button>
@@ -373,7 +373,7 @@ export default function AdminToDoTasks() {
           {allNews.length > VISIBLE_DEFAULT && (
             <button
               onClick={() => setVisible(VISIBLE_DEFAULT)}
-              className="px-3 py-1.5 text-sm rounded bg-gray-100 hover:bg-gray-200"
+              className="px-3 py-1.5 text-sm rounded bg-gray-100 hover:bg-gray-200 text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               最新5件のみ
             </button>
@@ -386,7 +386,7 @@ export default function AdminToDoTasks() {
       </section>
 
       {/* 📋 対応タスクリスト */}
-      <section className="bg-white rounded-xl shadow p-5">
+      <section className="bg-white text-gray-900 rounded-xl shadow p-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xl font-semibold">📋 対応タスクリスト / Compliance Tasks</h2>
           <div className="text-sm text-gray-500">達成率: {doneRate}%</div>
@@ -396,7 +396,7 @@ export default function AdminToDoTasks() {
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <label className="text-sm text-gray-600">ドライバー:</label>
           <select
-            className="border rounded px-3 py-2"
+            className="border border-gray-300 rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             value={selectedDriverId}
             onChange={(e) => setSelectedDriverId(e.target.value)}
           >
@@ -412,7 +412,7 @@ export default function AdminToDoTasks() {
             <button
               onClick={clearAll}
               disabled={!tasks.length}
-              className="ml-auto px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-40"
+              className="ml-auto px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
               title="選択中ドライバーの全タスク削除"
             >
               全削除
@@ -424,25 +424,25 @@ export default function AdminToDoTasks() {
         {isAdmin && selectedDriverId && (
           <div className="mb-4 grid grid-cols-1 md:grid-cols-6 gap-2">
             <input
-              className="border rounded px-3 py-2 md:col-span-2"
+              className="border border-gray-300 rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ..."
               placeholder="タスク名（必須）"
               value={form.label}
               onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
             />
             <input
-              className="border rounded px-3 py-2"
+              className="border border-gray-300 rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ..."
               placeholder="法令タグ 例: 電帳法"
               value={form.lawTag || ""}
               onChange={(e) => setForm((f) => ({ ...f, lawTag: e.target.value }))}
             />
             <input
-              className="border rounded px-3 py-2"
+              className="border border-gray-300 rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ..."
               placeholder="担当 例: 管理部"
               value={form.owner || ""}
               onChange={(e) => setForm((f) => ({ ...f, owner: e.target.value }))}
             />
             <input
-              className="border rounded px-3 py-2"
+              className="border border-gray-300 rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ..."
               placeholder="期限 YYYY-MM-DD"
               value={form.due || ""}
               onChange={(e) => setForm((f) => ({ ...f, due: e.target.value }))}
@@ -463,13 +463,13 @@ export default function AdminToDoTasks() {
                     tplId: undefined,
                   });
                 }}
-                className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+                className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               >
                 <Plus size={16} /> 追加
               </button>
             </div>
             <textarea
-              className="border rounded px-3 py-2 md:col-span-6"
+              className="border border-gray-300 rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ..."
               placeholder="メモ（任意）"
               value={form.note || ""}
               onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
@@ -484,7 +484,7 @@ export default function AdminToDoTasks() {
         )}
 
         {selectedDriverId && (
-          <ul className="space-y-3">
+         <ul className="space-y-3 text-gray-900">
             {tasks.map((t) => {
               const strike = t.excluded || t.done;
               return (
@@ -501,12 +501,12 @@ export default function AdminToDoTasks() {
                     <label className="inline-flex items-center">
                       <input
                         type="checkbox"
-                        className="mr-2"
+                        className="mr-2 accent-blue-600"
                         checked={t.done || false}
                         onChange={() => toggleTask(t)}
                         disabled={t.excluded === true} // 対象外の時は完了チェックを無効化してもよい
                       />
-                      <span className={strike ? "line-through text-gray-400" : ""}>{t.label}</span>
+                      <span className={strike ? "line-through text-gray-500" : ""}>{t.label}</span>
                     </label>
 
                     <div className="text-xs text-gray-500 mt-0.5 space-x-2">
@@ -522,7 +522,7 @@ export default function AdminToDoTasks() {
                       <label className="inline-flex items-center gap-2">
                         <input
                           type="checkbox"
-                          checked={t.excluded || false}
+                          className="accent-gray-600" checked={t.excluded || false}
                           onChange={() => toggleExcluded(t)}
                         />
                         <span>対象外</span>
@@ -549,12 +549,12 @@ export default function AdminToDoTasks() {
       </section>
 
       {/* 📂 保存期間ガイド */}
-      <section className="bg-white rounded-xl shadow p-5">
+      <section className="bg-white text-gray-900 rounded-xl shadow p-5">
         <h2 className="text-xl font-semibold mb-3">📂 保存記録ガイド / Record Retention Guide</h2>
         <div className="overflow-x-auto">
-          <table className="min-w-full table-auto border border-gray-300">
+          <table className="min-w-full table-auto border border-gray-300 text-gray-900">
             <thead>
-              <tr className="bg-gray-100">
+              <tr className="bg-gray-100 text-gray-900">
                 <th className="px-4 py-2 border text-left">書類名 / Document</th>
                 <th className="px-4 py-2 border text-left">保存期間 / Retention</th>
                 <th className="px-4 py-2 border text-left">関連法令 / Related Law</th>

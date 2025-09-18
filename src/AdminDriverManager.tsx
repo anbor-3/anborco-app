@@ -105,6 +105,23 @@ export interface Driver {
   uid: string; loginId: string; password: string; [key: string]: any;
 }
 
+const isProd = process.env.NODE_ENV === "production";
+
+const loadDriversLocal = (company: string): Driver[] => {
+  try {
+    const all = JSON.parse(localStorage.getItem("driverMaster") || "[]");
+    return Array.isArray(all) ? all.filter((x: any) => x.company === company) : [];
+  } catch { return []; }
+};
+
+const saveDriversLocal = (company: string, drivers: Driver[]) => {
+  try {
+    const all = JSON.parse(localStorage.getItem("driverMaster") || "[]");
+    const others = Array.isArray(all) ? all.filter((x: any) => x.company !== company) : [];
+    localStorage.setItem("driverMaster", JSON.stringify([...others, ...drivers]));
+  } catch {}
+};
+
 /* ======== 本番仕様：ドライバー用 Firebase Auth 発行 API 呼び出し ======== */
 const provisionDriverAuth = async (company: string, loginId: string, password: string) => {
   const auth = getAuth();
@@ -127,7 +144,6 @@ const provisionDriverAuth = async (company: string, loginId: string, password: s
   return res.json() as Promise<{ uid: string; email: string }>;
 };
 
-// ✅ Firestoreからドライバー一覧を取得する関数（あとで使います）
 export const fetchDrivers = async (company: string): Promise<Driver[]> => {
   try {
     const auth = getAuth();
@@ -140,23 +156,26 @@ export const fetchDrivers = async (company: string): Promise<Driver[]> => {
     });
     if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const drivers = await res.json();
+    // 取得成功時：開発時はローカルにもキャッシュ
+    if (!isProd) saveDriversLocal(company, drivers);
     return drivers;
   } catch (error) {
     console.error("❌ ドライバー取得失敗:", error);
+    // 取得失敗時：開発時はローカルにフォールバック
+    if (!isProd) return loadDriversLocal(company);
     return [];
   }
 };
 
-// ✅ Neonに保存する共通関数（File/平文PWは送らない）
 const persist = async (company: string, drivers: Driver[], opts?: { silent?: boolean }) => {
   const silent = !!opts?.silent;
   const auth = getAuth();
   const idToken = await auth.currentUser?.getIdToken();
   if (!idToken) {
-    if (!silent) alert("未ログインです。再ログインしてください。");
+    if (silent) return;
+    alert("未ログインです。再ログインしてください。");
     throw new Error("no token");
   }
-  // attachments / licenseFiles / password は送らない（PWはサーバ保存禁止）
   const sanitized = drivers.map(({ attachments, licenseFiles, password, ...rest }) => rest);
   try {
     const res = await fetch(api("/api/drivers/save"), {
@@ -166,9 +185,15 @@ const persist = async (company: string, drivers: Driver[], opts?: { silent?: boo
       body: JSON.stringify({ company, drivers: sanitized }),
     });
     if (!res.ok) throw new Error(`Save failed: ${res.status}`);
+
+    // ★成功時：開発時はローカルにも保存
+    if (!isProd) saveDriversLocal(company, sanitized as unknown as Driver[]);
   } catch (e) {
     console.error("❌ 保存に失敗:", e);
     if (!silent) alert("保存に失敗しました。ネットワークをご確認ください。");
+
+    // ★失敗時：開発時はローカルへフォールバック保存
+    if (!isProd) saveDriversLocal(company, sanitized as unknown as Driver[]);
     throw e;
   }
 };
@@ -179,7 +204,11 @@ const AdminDriverManager = () => {
   }, 600);
 
   const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
-  const company = admin.company || "";
+ const company =
+   admin.company ||
+   admin.companyName ||
+   localStorage.getItem("company") ||
+   "";
 
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [customFields, setCustomFields] = useState<string[]>([]);
@@ -195,31 +224,32 @@ const AdminDriverManager = () => {
   type InsertMode = 'top' | 'bottom' | 'afterSelected' | 'byLoginId';
   const [insertMode, setInsertMode] = useState<InsertMode>('bottom');
 
-  // 再読込ヘルパ
-  const reloadFromServer = async () => {
+ const reloadFromServer = async () => {
+  if (!company) return; // ★ company 未確定なら何もしない
+  const fetched = await fetchDrivers(company);
+  setDrivers(fetched);
+  setStats(prev => ({ ...prev, driverCount: fetched.length, total: prev.adminCount + fetched.length }));
+};
+
+  useEffect(() => {
+  const load = async () => {
+    if (!company) return; // ★ company 未確定なら処理しない
+
     const fetched = await fetchDrivers(company);
     setDrivers(fetched);
-    setStats(prev => ({ ...prev, driverCount: fetched.length, total: prev.adminCount + fetched.length }));
+
+    const storedCustom = localStorage.getItem("driverCustomFields");
+    if (storedCustom) setCustomFields(JSON.parse(storedCustom));
+
+    const c = await loadCompanyCaps(company);
+    setCaps(c);
+
+    const s = await fetchCompanyStats(company);
+    setStats({ ...s, driverCount: fetched.length, total: s.adminCount + fetched.length });
+    setLoaded(true);
   };
-
-  // 初期ロード
-  useEffect(() => {
-    const load = async () => {
-      const fetched = await fetchDrivers(company);
-      setDrivers(fetched);
-
-      const storedCustom = localStorage.getItem("driverCustomFields");
-      if (storedCustom) setCustomFields(JSON.parse(storedCustom));
-
-      const c = await loadCompanyCaps(company);
-      setCaps(c);
-
-      const s = await fetchCompanyStats(company);
-      setStats({ ...s, driverCount: fetched.length, total: s.adminCount + fetched.length });
-      setLoaded(true);
-    };
-    load();
-  }, []);
+  load();
+}, [company]); // ★ 依存を company に
 
   // ドライバー配列が変わるたびに合算を更新
   useEffect(() => {
@@ -389,33 +419,33 @@ const AdminDriverManager = () => {
       loginId = `driver${String(seq).padStart(4, "0")}`;
     }
 
-    // Firebase発行は409（重複）に備えて最大5回リトライ（連番を+1）
+    // Firebase発行（失敗してもドラフト行を作る）
     let uid = "";
-    let password = "";
-    let attempts = 0;
-
-    while (attempts < 5) {
-      password = genRandom(8); // 表示用。保存はしない
-      try {
-        const { uid: createdUid } = await provisionDriverAuth(company, loginId, password);
-        uid = createdUid;
-        break; // 成功
-      } catch (e: any) {
-        if (e?.status === 409) {
-          // 衝突 → 末尾連番を+1して再試行
-          seq += 1;
-          loginId = `driver${String(seq).padStart(4, "0")}`;
-          attempts++;
-          continue;
+    let password = genRandom(8); // 画面表示だけ。サーバには送らない
+    let provisioned = false;
+    try {
+      // 409（衝突）には連番を進めて最大5回まで再試行
+      let attempts = 0;
+      while (attempts < 5) {
+        try {
+          const { uid: createdUid } = await provisionDriverAuth(company, loginId, password);
+          uid = createdUid;
+          provisioned = true;
+          break;
+        } catch (e: any) {
+          if (e?.status === 409) {
+            seq += 1;
+            loginId = `driver${String(seq).padStart(4, "0")}`;
+            attempts++;
+            continue;
+          }
+          throw e; // その他のエラー→下の catch へ
         }
-        // その他はそのままエラー
-        throw e;
       }
-    }
-
-    if (!uid) {
-      alert("ログインIDの重複で作成できませんでした。もう一度お試しください。");
-      return;
+    } catch {
+      // オフライン/未ログイン/API不通など：ドラフト UID を払い出して続行
+      uid = `local-${Date.now()}-${genRandom(4)}`;
+      provisioned = false;
     }
 
     const newDriver: Driver = {
@@ -440,6 +470,7 @@ const AdminDriverManager = () => {
       resting: false,
       shiftStart: "09:00",
       shiftEnd: "18:00",
+      provisionPending: !provisioned,
     };
 
     // === 差し込み位置モードを反映 ===
@@ -463,13 +494,28 @@ const AdminDriverManager = () => {
     }
 
     setDrivers(updated);
-    persistDebounced(company, updated);
 
-    // 追加直後から即編集 & 詳細展開（差し込み位置に合わせる）
-    setEditingIndex(newRowIndex);
-    setExpandedRowIndex(newRowIndex);
+// ★ 追加直後は必ず保存 → サーバ再読込（戻ると消える問題の対策）
+await persist(company, updated);
+await reloadFromServer();
 
-    addNotification(`ドライバーを追加しました（ログインID: ${loginId} / 初期PW: ${password}）`);
+// 即編集 & 詳細展開
+setEditingIndex(newRowIndex);
+setExpandedRowIndex(newRowIndex);
+
+// ★ ワンタイム表示 & クリップボードコピー
+try {
+  await navigator.clipboard.writeText(`ログインID: ${loginId}\n初期PW: ${password}`);
+} catch {}
+alert(
+  `✅ ドライバーを追加しました\n` +
+  `ログインID: ${loginId}\n` +
+  `初期パスワード: ${password}\n\n` +
+  `${provisioned ? "" : "⚠️ 認証アカウントが未発行の可能性があります。/api/drivers/provision を確認してください。\n"}` +
+  `※このパスワードは今回のみ表示され、サーバには保存されません。`
+);
+
+addNotification(`ドライバーを追加しました（ログインID: ${loginId} / 初期PW: ${password}）`);
   };
 
   const handleAddRow = async () => addDriverRow(false);
@@ -510,17 +556,12 @@ const AdminDriverManager = () => {
     const base = "inline-block px-3 py-1 rounded-full font-semibold text-sm ";
     switch (ct) {
       case "社員": return { class: base + "text-white bg-green-600",  label: "社員" };
-      case "委託": return { class: base + "text-white bg紫-600", label: "委託" }; // ここだけ意図的に色を分けるなら調整
+      case "委託": return { class: base + "text-white bg-purple-600", label: "委託" };
       default:     return { class: base + "text-gray-700 bg-gray-300", label: "未設定" };
     }
   };
 
-  return (
-    <div className="p-4 w-full overflow-auto bg-white">
-      <div className="flex items-center text-2xl font-bold mb-4">
-        <span className="mr-2">🚚</span>
-        <span>ドライバー管理 <span className="text-sm text-gray-500 ml-2">-Driver Manager-</span></span>
-      </div>
+  return ( <div className="p-4 w-full overflow-auto bg-white"> <div className="flex items-center text-black font-bold mb-4"> <span className="mr-2">🚚</span> <span>ドライバー管理 <span className="text-sm text-gray-500 ml-2">-Driver Manager-</span></span> </div>
 
       <div className="flex items-center gap-4 mb-2">
         <button
@@ -536,7 +577,8 @@ const AdminDriverManager = () => {
         <div className="flex items-center gap-2">
           <label className="text-sm text-gray-600">差し込み位置</label>
           <select
-            className="border rounded px-2 py-1 text-sm"
+            className="border rounded px-2 py-1 text-sm bg-white text-gray-900
+              focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             value={insertMode}
             onChange={(e) => setInsertMode(e.target.value as InsertMode)}
             title="新規行をどこに差し込むか選べます"
@@ -563,7 +605,7 @@ const AdminDriverManager = () => {
       </div>
 
       <div className="w-full overflow-x-auto">
-        <table className="w-full border border-gray-300 shadow table-auto whitespace-nowrap">
+        <table className="w-full border border-gray-300 shadow table-auto whitespace-nowrap bg-white text-slate-900">
           <thead className="bg-gray-800 text-white font-bold">
             <tr>
               <th className="border px-2 py-1">ステータス</th>
@@ -583,88 +625,224 @@ const AdminDriverManager = () => {
               <th className="border px-2 py-1">ファイル添付</th>
             </tr>
           </thead>
-          <tbody>
-            {drivers.map((d, idx) => (
-              <tr key={idx} className="odd:bg-white even:bg-gray-100">
-                <td className="border px-2 py-1 break-all">
-                  <div className={`px-2 py-1 rounded-full text-xs font-semibold ${getStatusColor(d.status)}`}>{d.status}</div>
-                  <div className="text-[10px] text-gray-600 mt-1">最終更新: {d.statusUpdatedAt || "未取得"}</div>
-                </td>
-                <td className="border px-2 py-1 break-all">
-                  <button className="bg-yellow-500 hover:bg-yellow-600 text-white px-2 py-1 rounded mr-2" onClick={() => { setEditingIndex(idx); setExpandedRowIndex(idx); }}>編集</button>
-                  <button className="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded" onClick={async () => {
-                    if (!window.confirm("本当にこのドライバーを削除しますか？")) return;
-                    const updated = [...drivers]; updated.splice(idx, 1); setDrivers(updated); await persist(company, updated); await reloadFromServer();
-                  }}>削除</button>
-                </td>
-                <td className="border px-2 py-1 break-all">{d.id}</td>
-                <td className="border px-2 py-1 break-all">
-                  {editingIndex===idx ? (
-                    <input
-                      autoFocus
-                      className="w-full text-sm"
-                      placeholder="例）佐藤 太郎"
-                      value={d.name}
-                      onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).name=e.target.value; setDrivers(u); persistDebounced(company,u); }}
-                    />
-                  ) : d.name}
-                </td>
+          <tbody className="text-slate-900">
+  {drivers.map((d, idx) => (
+    <tr key={idx} className="odd:bg-white even:bg-gray-100">
+      <td className="border px-2 py-1 break-all">
+        <div className={`px-2 py-1 rounded-full text-xs font-semibold ${getStatusColor(d.status)}`}>{d.status}</div>
+        <div className="text-[10px] text-gray-600 mt-1">最終更新: {d.statusUpdatedAt || "未取得"}</div>
+      </td>
 
-                <td className="border px-2 py-1 break-all">
-                  {editingIndex===idx ? (
-                    <select className="w-full text-sm" value={d.contractType}
-                      onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).contractType=e.target.value; setDrivers(u); persistDebounced(company,u); }}>
-                      <option value="社員">社員</option><option value="委託">委託</option>
-                    </select>
-                  ) : <span className={`inline-block px-3 py-1 rounded-full font-semibold text-sm ${d.contractType==="社員"?"text-white bg-green-600":"text-white bg紫-600"}`}>{d.contractType}</span>}
-                </td>
-                <td className="border px-2 py-1 break-all">
-                  {editingIndex===idx ? (
-                    <input className="w-full text-sm disabled:bg-gray-100" value={d.invoiceNo || ""} onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).invoiceNo=e.target.value; setDrivers(u); persistDebounced(company,u); }} placeholder="T1234-…" disabled={d.contractType!=="委託"} />
-                  ) : d.contractType==="委託" ? d.invoiceNo || "-" : "-"}
-                </td>
-                <td className="border px-2 py-1 break-all">{editingIndex===idx ? (<input className="w-full text-sm" value={d.company} onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).company=e.target.value; setDrivers(u); persistDebounced(company,u); }} />) : d.company}</td>
-                <td className="border px-2 py-1 break-all">{editingIndex===idx ? (<input className="w-full text-sm" value={d.phone} onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).phone=e.target.value; setDrivers(u); persistDebounced(company,u); }} />) : d.phone}</td>
-                <td className="border px-2 py-1 break-all">{d.loginId}</td>
-                <td className="border px-2 py-1 break-all">{d.password}</td>
-                <td className="border px-2 py-1 break-all">{editingIndex===idx ? (<input className="w-full text-sm" value={d.address} onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).address=e.target.value; setDrivers(u); persistDebounced(company,u); }} />) : d.address}</td>
-                <td className="border px-2 py-1 break-all">{editingIndex===idx ? (<input type="email" className="w-full text-sm" value={d.mail||""} onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).mail=e.target.value; setDrivers(u); persistDebounced(company,u); }} placeholder="sample@example.com" />) : d.mail}</td>
-                <td className="border px-2 py-1 break-all">{editingIndex===idx ? (<input type="date" className="w-full text-sm" value={d.birthday} onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).birthday=e.target.value; setDrivers(u); persistDebounced(company,u); }} />) : d.birthday}</td>
-                {/* 省略: カスタム項目 + 添付UIは前回版と同様 */}
-                <td className="border px-2 py-1 text-center">
-                  <button className="bg-blue-500 text-white px-2 py-1 rounded text-sm" onClick={()=>setExpandedRowIndex(expandedRowIndex===idx?null:idx)}>詳細</button>
-                  {expandedRowIndex===idx && (
-                    <div className="mt-2">
-                      {editingIndex===idx && (<input type="file" multiple onChange={(e)=>handleFileUpload(idx, e)} className="mb-1 text-xs" />)}
-                      {/* 添付一覧 */}
-                      <ul className="text-left text-xs mt-1">
-                        {(d.attachments || []).map((file, fileIndex) => (
-                          <li key={fileIndex} className="flex items-center justify-between mb-1">
-                            <a
-                              href={URL.createObjectURL(file)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 underline break-all w-40"
-                            >
-                              {file.name}
-                            </a>
-                            {editingIndex === idx && (
-                              <button
-                                className="text-red-600 ml-2"
-                                onClick={() => handleFileDelete(idx, fileIndex)}
-                              >
-                                削除
-                              </button>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+      <td className="border px-2 py-1 break-all">
+        <button
+          className="bg-yellow-500 hover:bg-yellow-600 text-white px-2 py-1 rounded mr-2"
+          onClick={() => { setEditingIndex(idx); setExpandedRowIndex(idx); }}
+        >
+          編集
+        </button>
+        <button
+          className="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded"
+          onClick={async () => {
+            if (!window.confirm("本当にこのドライバーを削除しますか？")) return;
+            const updated = [...drivers];
+            updated.splice(idx, 1);
+            setDrivers(updated);
+            await persist(company, updated);
+            await reloadFromServer();
+          }}
+        >
+          削除
+        </button>
+      </td>
+
+      <td className="border px-2 py-1 break-all">
+        {d.id}
+        {(d as any).provisionPending && (
+          <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-800 border border-yellow-200">
+            未発行
+          </span>
+        )}
+      </td>
+
+      {/* 氏名 */}
+      <td className="border px-2 py-1 break-all">
+        {editingIndex===idx ? (
+          <input
+            autoFocus
+            className="w-full text-sm border border-gray-300 rounded px-2 py-1
+                       bg-white text-gray-900 placeholder-gray-500
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            placeholder="例）佐藤 太郎"
+            value={d.name}
+            onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).name=e.target.value; setDrivers(u); persistDebounced(company,u); }}
+          />
+        ) : d.name}
+      </td>
+
+      {/* 契約種別 */}
+      <td className="border px-2 py-1 break-all">
+        {editingIndex===idx ? (
+          <select
+            className="w-full text-sm border border-gray-300 rounded px-2 py-1
+                       bg-white text-gray-900
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            value={d.contractType}
+            onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).contractType=e.target.value; setDrivers(u); persistDebounced(company,u); }}
+          >
+            <option value="社員">社員</option>
+            <option value="委託">委託</option>
+          </select>
+        ) : (
+          <span className={`inline-block px-3 py-1 rounded-full font-semibold text-sm ${d.contractType==="社員"?"text-white bg-green-600":"text-white bg-purple-600"}`}>
+            {d.contractType}
+          </span>
+        )}
+      </td>
+
+      {/* インボイス番号（委託のみ編集可） */}
+      <td className="border px-2 py-1 break-all">
+        {editingIndex===idx ? (
+          <input
+            className="w-full text-sm border border-gray-300 rounded px-2 py-1
+                       bg-white text-gray-900 placeholder-gray-500
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+                       disabled:bg-gray-100"
+            value={d.invoiceNo || ""}
+            onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).invoiceNo=e.target.value; setDrivers(u); persistDebounced(company,u); }}
+            placeholder="T1234-…"
+            disabled={d.contractType!=="委託"}
+          />
+        ) : d.contractType==="委託" ? (d.invoiceNo || "-") : "-"}
+      </td>
+
+      {/* 所属会社 */}
+      <td className="border px-2 py-1 break-all">
+        {editingIndex===idx ? (
+          <input
+            className="w-full text-sm border border-gray-300 rounded px-2 py-1
+                       bg-white text-gray-900
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            value={d.company}
+            onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).company=e.target.value; setDrivers(u); persistDebounced(company,u); }}
+          />
+        ) : d.company}
+      </td>
+
+      {/* 電話番号 */}
+      <td className="border px-2 py-1 break-all">
+        {editingIndex===idx ? (
+          <input
+            className="w-full text-sm border border-gray-300 rounded px-2 py-1
+                       bg-white text-gray-900
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            value={d.phone}
+            onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).phone=e.target.value; setDrivers(u); persistDebounced(company,u); }}
+          />
+        ) : d.phone}
+      </td>
+
+      {/* ログインID／PW（表示のみ） */}
+      <td className="border px-2 py-1 break-all">{d.loginId}</td>
+      <td className="border px-2 py-1 break-all">{d.password}</td>
+
+      {/* 住所 */}
+      <td className="border px-2 py-1 break-all">
+        {editingIndex===idx ? (
+          <input
+            className="w-full text-sm border border-gray-300 rounded px-2 py-1
+                       bg-white text-gray-900
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            value={d.address}
+            onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).address=e.target.value; setDrivers(u); persistDebounced(company,u); }}
+          />
+        ) : d.address}
+      </td>
+
+      {/* メール */}
+      <td className="border px-2 py-1 break-all">
+        {editingIndex===idx ? (
+          <input
+            type="email"
+            className="w-full text-sm border border-gray-300 rounded px-2 py-1
+                       bg-white text-gray-900 placeholder-gray-500
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            value={d.mail||""}
+            onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).mail=e.target.value; setDrivers(u); persistDebounced(company,u); }}
+            placeholder="sample@example.com"
+          />
+        ) : d.mail}
+      </td>
+
+      {/* 生年月日 */}
+      <td className="border px-2 py-1 break-all">
+        {editingIndex===idx ? (
+          <input
+            type="date"
+            className="w-full text-sm border border-gray-300 rounded px-2 py-1
+                       bg-white text-gray-900
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            value={d.birthday}
+            onChange={(e)=>{ const u=[...drivers]; (u[idx] as any).birthday=e.target.value; setDrivers(u); persistDebounced(company,u); }}
+          />
+        ) : d.birthday}
+      </td>
+
+      {/* カスタム列（必要なら同じクラスで統一してください） */}
+      {customFields.map((field, i) => (
+        <td key={`c-${idx}-${i}`} className="border px-2 py-1 break-all">
+          {editingIndex===idx ? (
+            <input
+              className="w-full text-sm border border-gray-300 rounded px-2 py-1
+                         bg-white text-gray-900 placeholder-gray-500
+                         focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              value={(d as any)[field] || ""}
+              onChange={(e)=>{ const u=[...drivers]; (u[idx] as any)[field]=e.target.value; setDrivers(u); persistDebounced(company,u); }}
+            />
+          ) : ((d as any)[field] || "")}
+        </td>
+      ))}
+
+      {/* 添付 */}
+      <td className="border px-2 py-1 text-center">
+        <button
+          className="bg-blue-500 text-white px-2 py-1 rounded text-sm"
+          onClick={()=>setExpandedRowIndex(expandedRowIndex===idx?null:idx)}
+        >
+          詳細
+        </button>
+        {expandedRowIndex===idx && (
+          <div className="mt-2">
+            {editingIndex===idx && (
+              <input type="file" multiple onChange={(e)=>handleFileUpload(idx, e)} className="mb-1 text-xs" />
+            )}
+            <ul className="text-left text-xs mt-1">
+              {(d.attachments || []).map((file, fileIndex) => (
+                <li key={fileIndex} className="flex items-center justify-between mb-1">
+                  <a
+                    href={URL.createObjectURL(file)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 underline break-all w-40"
+                  >
+                    {file.name}
+                  </a>
+                  {editingIndex === idx && (
+                    <button
+                      className="text-red-600 ml-2"
+                      onClick={() => handleFileDelete(idx, fileIndex)}
+                    >
+                      削除
+                    </button>
                   )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </td>
+    </tr>
+  ))}
+</tbody>
         </table>
       </div>
 
