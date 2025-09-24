@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>お申し込み</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto;max-width:720px;margin:24px auto;padding:0 16px}
+    h1{font-size:20px;margin:0 0 16px}
+    .card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    label{min-width:140px}
+    select,input{padding:8px;border:1px solid #ccc;border-radius:8px}
+    button{padding:10px 14px;border-radius:10px;border:1px solid #222;background:#111;color:#fff;cursor:pointer}
+    button.ghost{background:#fff;color:#111}
+    .right{display:flex;gap:8px;justify-content:flex-end}
+    .muted{color:#666;font-size:12px}
+  </style>
+</head>
+<body>
+  <h1>お申し込み</h1>
+
+  <div class="card">
+    <div class="row">
+      <label for="plan">1) 月額プラン</label>
+      <select id="plan">
+        <option value="basic">ベーシック</option>
+        <option value="advanced">アドバンス</option>
+        <option value="pro">プロ</option>
+        <option value="elite">エリート</option>
+        <option value="premium">プレミアム</option>
+        <option value="unlimited">アンリミテッド</option>
+      </select>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <label for="setup">2) 導入プラン</label>
+      <select id="setup">
+        <option value="none">なし</option>
+        <option value="basic">ベーシック</option>
+        <option value="standard">スタンダード</option>
+        <option value="premium">プレミアム</option>
+        <option value="unlimited">アンリミテッド</option>
+      </select>
+    </div>
+
+    <div id="seatsRow" class="row" style="margin-top:10px; display:none">
+      <label for="seats">ご利用人数</label>
+      <input id="seats" type="number" min="1" value="100" style="width:120px" />
+      <div class="muted">100人まで無料、101人目から ¥800/人</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <label>会社名（任意）</label>
+      <input id="companyId" type="text" placeholder="例）テスト社" style="flex:1" />
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label>メール（請求書用・任意）</label>
+      <input id="email" type="email" placeholder="example@company.jp" style="flex:1" />
+    </div>
+  </div>
+
+  <div class="card">
+    <div><b>概算見積</b></div>
+    <div id="estMonthly">月額：-</div>
+    <div id="estSetup">導入費：-</div>
+    <div id="estTotal" style="font-weight:bold;margin-top:6px">初回合計（概算）：-</div>
+    <div class="muted" style="margin-top:6px">
+      ※ 実際の課金はStripe上で確定します。Unlimitedの追加単価（101人目〜¥800）は段階価格で自動計算。
+    </div>
+    <div class="right" style="margin-top:12px">
+      <button class="ghost" id="invoiceBtn" type="button">請求書で申し込む</button>
+<button id="cardBtn" type="button">カードで支払う</button>
+    </div>
+  </div>
+
+  <script>
+  // ★ APIは 127.0.0.1 に固定
+  const API = "https://app.anbor.co.jp";
+  const JPY = n => "¥" + (n ?? 0).toLocaleString();
+
+  // UI参照
+  const planEl   = document.getElementById("plan");
+  const setupEl  = document.getElementById("setup");
+  const seatsRow = document.getElementById("seatsRow");
+  const seatsEl  = document.getElementById("seats");
+  const companyEl= document.getElementById("companyId");
+  const emailEl  = document.getElementById("email");
+
+  const estMonthly = document.getElementById("estMonthly");
+  const estSetup   = document.getElementById("estSetup");
+  const estTotal   = document.getElementById("estTotal");
+  const cardBtn    = document.getElementById("cardBtn");
+  const invoiceBtn = document.getElementById("invoiceBtn");
+
+  let PRICE = null;
+  let MONTHLY_CACHE = {};
+  let SETUP_CACHE = {};
+
+  function setLoading() {
+    estMonthly.textContent = "月額：金額読込中…";
+    estSetup.textContent   = "導入費：金額読込中…";
+    estTotal.textContent   = "初回合計（概算）：金額読込中…";
+  }
+
+  async function loadPrices(){
+    try {
+      setLoading();
+      const r = await fetch(API + "/api/debug/price-check", { cache: "no-store" });
+      if (!r.ok) throw new Error("price-check http " + r.status);
+      PRICE = await r.json();
+
+      // 月額（unlimited_base は基本料）
+      MONTHLY_CACHE = {
+        basic:    PRICE.basic?.unit_amount    || 0,
+        advanced: PRICE.advanced?.unit_amount || 0,
+        pro:      PRICE.pro?.unit_amount      || 0,
+        elite:    PRICE.elite?.unit_amount    || 0,
+        premium:  PRICE.premium?.unit_amount  || 0,
+        unlimited_base: PRICE.unl_base?.unit_amount || 0,
+      };
+
+      // 導入費
+      SETUP_CACHE = {
+        none: 0,
+        basic:     PRICE.setup_basic?.unit_amount    || 0,
+        standard:  PRICE.setup_standard?.unit_amount || 0,
+        premium:   PRICE.setup_premium?.unit_amount  || 0,
+        unlimited: PRICE.setup_unlimited?.unit_amount|| 0,
+      };
+
+      render();
+    } catch (e) {
+      console.error("[price-load]", e);
+      estMonthly.textContent = "月額：-";
+      estSetup.textContent   = "導入費：-";
+      estTotal.textContent   = "初回合計（概算）：-（価格取得に失敗）";
+      // 価格読込みに失敗しても、申込自体は可能（Stripe側で確定する）なのでボタンは有効のまま
+    }
+  }
+
+  function render(){
+    const plan  = planEl.value;
+    const setup = setupEl.value;
+
+    const isUnl = plan === "unlimited";
+    seatsRow.style.display = isUnl ? "flex" : "none";
+
+    const seats = isUnl ? Math.max(1, parseInt(seatsEl.value || "100", 10)) : null;
+
+    let monthly = 0;
+    if (isUnl) {
+      const base  = MONTHLY_CACHE.unlimited_base || 0;
+      const extra = Math.max(0, (seats ?? 100) - 100) * 800; // 101人目以降 ¥800/人
+      monthly = base + extra;
+    } else {
+      monthly = MONTHLY_CACHE[plan] || 0;
+    }
+
+    const setupFee = SETUP_CACHE[setup] || 0;
+
+    estMonthly.textContent = "月額：" + JPY(monthly);
+    estSetup.textContent   = "導入費：" + JPY(setupFee);
+    estTotal.textContent   = "初回合計（概算）：" + JPY(monthly + setupFee);
+  }
+
+  function buildPayload(kind){
+    const plan  = planEl.value;
+    const setup = setupEl.value;
+    const payload = {
+      companyId: companyEl.value || undefined,
+      planId: plan,
+      seats: plan === "unlimited" ? Math.max(1, parseInt(seatsEl.value || "100", 10)) : undefined,
+      setup
+    };
+    if (kind === "quote") {
+      payload.customer = {
+        name:  companyEl.value || undefined,
+        email: emailEl.value   || undefined,
+      };
+    }
+    return payload;
+  }
+
+  async function goCheckout(){
+    try {
+      const r = await fetch(API + "/api/checkout/create", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(buildPayload("checkout"))
+      });
+      const x = await r.json();
+      if (x.url) location.href = x.url;
+      else alert("エラー：" + JSON.stringify(x));
+    } catch (e) {
+      console.error(e);
+      alert("通信エラー：Checkout に進めませんでした。\n" + (e?.message || e));
+    }
+  }
+
+  async function goQuote(){
+    try {
+      const r = await fetch(API + "/api/quotes/create", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(buildPayload("quote"))
+      });
+      const x = await r.json();
+      if (x.url) location.href = x.url;
+      else alert("エラー：" + JSON.stringify(x));
+    } catch (e) {
+      console.error(e);
+      alert("通信エラー：見積の作成に失敗しました。\n" + (e?.message || e));
+    }
+  }
+
+  // DOMが描画されてからイベントを貼る
+  window.addEventListener("DOMContentLoaded", () => {
+    planEl.addEventListener("change", render);
+    setupEl.addEventListener("change", render);
+    seatsEl.addEventListener("input", render);
+    cardBtn.addEventListener("click", goCheckout);
+    invoiceBtn.addEventListener("click", goQuote);
+    loadPrices();
+  });
+</script>
+</body>
+</html>

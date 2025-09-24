@@ -1,6 +1,7 @@
 // server.mjs (ESM) — dev-only API for Vite
 import express from "express";
 import cors from "cors";
+import dotenv from "dotenv";
 
 /* === 既存: 法令ニュース集約に使用 === */
 import fetch from "node-fetch";
@@ -9,9 +10,45 @@ import { XMLParser } from "fast-xml-parser";
 /* === 追加: DB & Firebase Admin === */
 import { Pool } from "pg";
 import admin from "firebase-admin";
+import Stripe from "stripe";
+
+dotenv.config({ path: "./server/.env.local" });
+/** 予備：ルートに .env があればそちらも読む（任意） */
+dotenv.config();
+
+// ===== Stripe 初期化（テスト鍵 sk_test_... を .env に）=====
+const { STRIPE_SECRET_KEY, PUBLIC_WEB_BASE_URL } = process.env;
+const stripe = new Stripe(STRIPE_SECRET_KEY ?? "", { apiVersion: "2024-06-20" });
+
+// 価格ID（.env から読む）
+const PRICES = {
+  monthly: {
+    basic: process.env.PRICE_BASIC,
+    advanced: process.env.PRICE_ADVANCED,
+    pro: process.env.PRICE_PRO,
+    elite: process.env.PRICE_ELITE,
+    premium: process.env.PRICE_PREMIUM,
+  },
+  // Unlimited は「基本料」と「追加ユーザー（月額・段階課金）」を別IDで管理
+  unlimited: {
+    base: process.env.PRICE_UNL_BASE,   // 数量=1
+    extra: process.env.PRICE_UNL_EXTRA, // 数量=総人数（0-100は¥0, 101+は¥800/人の段階価格）
+  },
+  // 導入費（任意）
+  setup: {
+    none: null,
+    basic: process.env.PRICE_SETUP_BASIC,
+    standard: process.env.PRICE_SETUP_STANDARD,
+    premium: process.env.PRICE_SETUP_PREMIUM,
+    unlimited: process.env.PRICE_SETUP_UNLIMITED,
+  },
+};
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: ["https://app.anbor.co.jp"],
+  credentials: true,
+}));
 app.use(express.json());
 
 /* ====================== Firebase Admin 初期化 ====================== */
@@ -210,6 +247,159 @@ app.post("/api/locations", verifyFirebaseToken, async (req, res) => {
   }
 });
 
+/* ===== Stripe: Checkout（動的・導入費は任意） ==================
+   POST /api/checkout/create
+   Body: {
+     companyId?: string, // 任意（メタデータ用）
+     planId: "basic"|"advanced"|"pro"|"elite"|"premium"|"unlimited",
+     seats?: number,     // unlimited の総人数（未指定は100扱い）
+     setup?: "none"|"basic"|"standard"|"premium"|"unlimited"  // 既定 none
+   }
+================================================================ */
+app.post("/api/checkout/create", async (req, res) => {
+  try {
+    const { companyId, planId, seats, setup = "none" } = req.body || {};
+    if (!planId) return res.status(400).json({ error: "planId required" });
+
+    const line_items = [];
+
+    if (planId === "unlimited") {
+      const base = PRICES.unlimited.base;
+      const extra = PRICES.unlimited.extra;
+      if (!base || !extra) return res.status(400).json({ error: "unlimited price ids missing" });
+      const totalSeats = Number.isFinite(seats) ? Math.max(1, Math.floor(seats)) : 100; // 既定100
+      line_items.push({ price: base, quantity: 1 });
+      // 段階価格：数量=総人数（0-100は自動¥0、101+は¥800/人）
+      line_items.push({ price: extra, quantity: totalSeats });
+    } else {
+      const priceId = PRICES.monthly[planId];
+      if (!priceId) return res.status(400).json({ error: "invalid planId" });
+      line_items.push({ price: priceId, quantity: 1 });
+    }
+
+    if (setup !== "none") {
+      const setupPrice = PRICES.setup[setup];
+      if (!setupPrice) return res.status(400).json({ error: "invalid setup" });
+      line_items.push({ price: setupPrice, quantity: 1 });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+  mode: "subscription",
+  line_items,
+  success_url: `${PUBLIC_WEB_BASE_URL}/billing-result.html?status=success&company=${encodeURIComponent(companyId || "")}`,
+cancel_url:  `${PUBLIC_WEB_BASE_URL}/billing-result.html?status=cancel`,
+  allow_promotion_codes: true,
+  metadata: { companyId: companyId || "", planId, seats: String(seats ?? "") },
+});
+
+    return res.json({ url: session.url });
+  } catch (e) {
+    console.error("POST /api/checkout/create", e);
+    res.status(500).json({ error: "server_error", detail: e?.message });
+  }
+});
+
+
+/* ===== Stripe: Hosted Quote（請求書で回収） ====================
+   POST /api/quotes/create
+   Body: { companyId?, planId, seats?, setup?, customer?: { name?, email? } }
+================================================================ */
+app.post("/api/quotes/create", async (req, res) => {
+  try {
+    const { companyId, planId, seats, setup = "none", customer = {} } = req.body || {};
+    if (!planId) return res.status(400).json({ error: "planId required" });
+
+    // ① line_items を組み立て（今のままでOK）
+    const line_items = [];
+    if (planId === "unlimited") {
+      const totalSeats = Number.isFinite(seats) ? Math.max(1, Math.floor(seats)) : 100;
+      line_items.push({ price: PRICES.unlimited.base,  quantity: 1 });
+      line_items.push({ price: PRICES.unlimited.extra, quantity: totalSeats });
+    } else {
+      line_items.push({ price: PRICES.monthly[planId], quantity: 1 });
+    }
+    if (setup !== "none") line_items.push({ price: PRICES.setup[setup], quantity: 1 });
+
+    // ② 顧客を作成（今のままでOK）
+    const cust = await stripe.customers.create({
+      name:  customer.name  || companyId || "Customer",
+      email: customer.email || undefined,
+      metadata: { companyId: companyId || "" },
+    });
+
+    // ③ ★ここがポイント：collection_method と days_until_due は subscription_data ではなく
+    //    それぞれ「トップレベル」と「invoice_settings」に置く！
+   const quote = await stripe.quotes.create({
+  customer: cust.id,
+  line_items,
+  collection_method: "send_invoice",
+  invoice_settings: { days_until_due: 7 },
+});
+
+const finalized = await stripe.quotes.finalizeQuote(quote.id);
+const url = finalized.url
+  || (finalized?.livemode === false && finalized?.id
+      ? `https://dashboard.stripe.com/test/quotes/${finalized.id}`
+      : null);
+if (!url) return res.status(500).json({ error: "no_public_url" });
+return res.json({ url });
+  } catch (e) {
+    console.error("POST /api/quotes/create", e);
+    res.status(500).json({ error: "server_error", detail: e?.message });
+  }
+});
+
+app.get("/api/debug/price-check", async (_req, res) => {
+  const ids = {
+    basic: PRICES.monthly.basic,
+    advanced: PRICES.monthly.advanced,
+    pro: PRICES.monthly.pro,
+    elite: PRICES.monthly.elite,
+    premium: PRICES.monthly.premium,
+    unl_base: PRICES.unlimited.base,
+    unl_extra: PRICES.unlimited.extra,
+    setup_basic: PRICES.setup.basic,
+    setup_standard: PRICES.setup.standard,
+    setup_premium: PRICES.setup.premium,
+    setup_unlimited: PRICES.setup.unlimited,
+  };
+  const out = {};
+  for (const [k, id] of Object.entries(ids)) {
+    if (!id) { out[k] = { ok:false, error:"missing" }; continue; }
+    try {
+      const price = await stripe.prices.retrieve(id);
+      out[k] = {
+        ok:true,
+        currency: price.currency,
+        recurring: !!price.recurring,
+        interval: price.recurring?.interval || null,
+        unit_amount: price.unit_amount,
+      };
+    } catch (e) {
+      out[k] = { ok:false, error:e?.message };
+    }
+  }
+  res.json(out);
+});
+
+// --- Stripeの鍵が有効かチェック（製品を1件リスト） ---
+app.get("/api/debug/stripe-key-check", async (_req, res) => {
+  try {
+    const p = await stripe.products.list({ limit: 1 });
+    res.json({ ok: true, products_count: p.data.length });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      message: e?.message,
+      code: e?.code,           // 例: 'ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT'
+      type: e?.type,           // StripeError の種別
+      status: e?.statusCode,   // HTTP ステータス
+      requestId: e?.requestId, // ある場合
+      raw: e?.raw?.message     // 低レベルの詳細
+    });
+  }
+});
+
 /* ====================== ヘルスチェック ====================== */
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
@@ -319,4 +509,25 @@ app.post("/api/drivers/provision", verifyFirebaseToken, async (req, res) => {
     console.error("POST /api/drivers/provision", e);
     return res.status(500).json({ error: "server_error" });
   }
+});
+
+/* ====================== デバッグ: 環境変数チェック ====================== */
+app.get("/api/debug/env-check", (_req, res) => {
+  res.json({
+    STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY,
+    PUBLIC_WEB_BASE_URL: process.env.PUBLIC_WEB_BASE_URL || null,
+    PRICE_KEYS: {
+      basic: !!process.env.PRICE_BASIC,
+      advanced: !!process.env.PRICE_ADVANCED,
+      pro: !!process.env.PRICE_PRO,
+      elite: !!process.env.PRICE_ELITE,
+      premium: !!process.env.PRICE_PREMIUM,
+      unl_base: !!process.env.PRICE_UNL_BASE,     // 追加
+      unl_extra: !!process.env.PRICE_UNL_EXTRA,   // 追加
+      setup_basic: !!process.env.PRICE_SETUP_BASIC,
+      setup_standard: !!process.env.PRICE_SETUP_STANDARD,
+      setup_premium: !!process.env.PRICE_SETUP_PREMIUM,
+      setup_unlimited: !!process.env.PRICE_SETUP_UNLIMITED,
+    },
+  });
 });
