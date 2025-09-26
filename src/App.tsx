@@ -1,5 +1,5 @@
 // src/App.tsx
-import React from "react";
+import SyncCompanyClaim from "./components/SyncCompanyClaim";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 
 import PasswordReset from "./pages/PasswordReset";
@@ -11,6 +11,7 @@ import MasterApp from "./apps/MasterApp";
 export default function App() {
   return (
     <Router>
+      <SyncCompanyClaim />
       <Routes>
         <Route path="/admin/*"  element={<AdminApp />} />
         <Route path="/driver/*" element={<DriverApp />} />

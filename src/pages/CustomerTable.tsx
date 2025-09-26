@@ -54,6 +54,10 @@ const getBadgeClass = (plan: string) => {
 
 /** 本番：APIから人数を取得（失敗時はlocalStorageへフォールバック） */
 const fetchUserCount = async (companyName: string) => {
+  // 会社名が空なら即0
+  if (!companyName?.trim()) return 0;
+
+  // まずはサーバ集計を利用（あるなら最優先）
   try {
     const res = await fetch(api(`/api/company/stats?company=${encodeURIComponent(companyName)}`), {
       credentials: "include",
@@ -64,10 +68,31 @@ const fetchUserCount = async (companyName: string) => {
       if (typeof json?.userCount === "number") return json.userCount;
     }
   } catch {}
-  const driverData = JSON.parse(localStorage.getItem("driverMaster") || "[]");
-  const adminData  = JSON.parse(localStorage.getItem("adminMaster")  || "[]");
-  const driverCount = driverData.filter((d: any) => d.company === companyName).length;
-  const adminCount  = adminData .filter((a: any) => a.company === companyName).length;
+
+  // ----- ローカルフォールバック（会社別キーを優先、空なら旧キーを見る）-----
+  const safeParse = (s: string | null) => {
+    try {
+      const v = JSON.parse(s || "[]");
+      return Array.isArray(v) ? v : [];
+    } catch {
+      return [];
+    }
+  };
+
+  // 管理者
+  const adminNew    = safeParse(localStorage.getItem(`adminMaster_${companyName}`));
+  const adminLegacy = safeParse(localStorage.getItem("adminMaster"));
+  const adminData   = adminNew.length ? adminNew : adminLegacy;
+
+  // ドライバー（将来的な会社別キーにも対応）
+  const driverNew    = safeParse(localStorage.getItem(`driverMaster_${companyName}`));
+  const driverLegacy = safeParse(localStorage.getItem("driverMaster"));
+  const driverData   = driverNew.length ? driverNew : driverLegacy;
+
+  // 念のため company でフィルタ（会社別キーでも安全）
+  const adminCount  = adminData .filter((a: any) => a?.company === companyName).length;
+  const driverCount = driverData.filter((d: any) => d?.company === companyName).length;
+
   return driverCount + adminCount;
 };
 

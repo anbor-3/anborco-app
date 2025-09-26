@@ -18,8 +18,15 @@ dotenv.config();
 
 // ===== Stripe 初期化（テスト鍵 sk_test_... を .env に）=====
 const { STRIPE_SECRET_KEY, PUBLIC_WEB_BASE_URL } = process.env;
-const stripe = new Stripe(STRIPE_SECRET_KEY ?? "", { apiVersion: "2024-06-20" });
 
+// ⬇ 先にチェック
+if (process.env.NODE_ENV === "production" && !STRIPE_SECRET_KEY) {
+  console.error("❌ STRIPE_SECRET_KEY 未設定。本番起動を停止します。");
+  process.exit(1);
+}
+
+// ⬇ その後で安全に生成
+const stripe = new Stripe(STRIPE_SECRET_KEY ?? "", { apiVersion: "2024-06-20" });
 // 価格ID（.env から読む）
 const PRICES = {
   monthly: {
@@ -43,13 +50,55 @@ const PRICES = {
     unlimited: process.env.PRICE_SETUP_UNLIMITED,
   },
 };
-
+if (process.env.NODE_ENV === "production") {
+  const mustHave = [
+    "PRICE_BASIC","PRICE_ADVANCED","PRICE_PRO","PRICE_ELITE","PRICE_PREMIUM",
+    "PRICE_UNL_BASE","PRICE_UNL_EXTRA",
+    "PRICE_SETUP_BASIC","PRICE_SETUP_STANDARD","PRICE_SETUP_PREMIUM","PRICE_SETUP_UNLIMITED",
+    "PUBLIC_WEB_BASE_URL"
+  ];
+  const missing = mustHave.filter(k => !process.env[k]);
+  if (missing.length) {
+    console.error("❌ Stripe関連 ENV 未設定:", missing.join(", "));
+    process.exit(1);
+  }
+try {
+    const u = new URL(process.env.PUBLIC_WEB_BASE_URL);
+    if (u.protocol !== "https:") {
+      throw new Error("PUBLIC_WEB_BASE_URL must be https in production");
+    }
+  } catch (e) {
+    console.error("❌ PUBLIC_WEB_BASE_URL が不正:", e.message);
+    process.exit(1);
+  }
+}
 const app = express();
+let ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// ⬇ 追加: 開発時に未設定ならローカルを自動許可
+if (!ALLOWED_ORIGINS.length && process.env.NODE_ENV !== "production") {
+  ALLOWED_ORIGINS = ["http://localhost:5173", "http://localhost:3000"];
+}
+
+// ⬇ 追加: 本番で空なら起動停止（取りこぼし防止）
+if (process.env.NODE_ENV === "production" && !ALLOWED_ORIGINS.length) {
+  console.error("❌ ALLOWED_ORIGINS 未設定。本番起動を停止します。");
+  process.exit(1);
+}
+
 app.use(cors({
-  origin: ["https://app.anbor.co.jp"],
+  origin: (origin, cb) => {
+    // 非ブラウザ（curl/サーバ間）の場合 origin が undefined のことがある
+    if (!origin) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS blocked: ${origin}`));
+  },
   credentials: true,
 }));
-app.use(express.json());
+app.use(express.json({ limit: "5mb" })); // 添付などでペイロードが増えるのに備え拡張
 
 /* ====================== Firebase Admin 初期化 ====================== */
 try {
@@ -72,10 +121,21 @@ export const pool = new Pool({
 
 /* ====================== 認証ミドルウェア ====================== */
 const SKIP_AUTH = process.env.SKIP_AUTH === "true"; // ローカル開発用（本番で true にしない）
+// 本番で SKIP_AUTH は絶対不可
+if (process.env.NODE_ENV === "production" && SKIP_AUTH) {
+  console.error("❌ SKIP_AUTH=true は本番で禁止です。環境変数を見直してください。");
+  process.exit(1);
+}
 
 async function verifyFirebaseToken(req, res, next) {
+  // ★ 開発中はトークン検証をスキップし、company を擬似的に入れる
   if (SKIP_AUTH && process.env.NODE_ENV !== "production") {
-    req.user = { uid: "dev-skip" };
+    const devCompany =
+      req.headers["x-dev-company"] ||
+      req.query?.company ||
+      req.body?.company ||
+      "DEV_CO";
+    req.user = { uid: "dev-skip", company: String(devCompany) };
     return next();
   }
   const h = req.headers.authorization || "";
@@ -83,13 +143,59 @@ async function verifyFirebaseToken(req, res, next) {
   if (!token) return res.status(401).json({ error: "No token" });
   try {
     const decoded = await admin.auth().verifyIdToken(token);
-    req.user = decoded; // { uid, email, ... }
+    req.user = decoded; // { uid, email, company などのカスタムクレーム }
     return next();
   } catch (e) {
     console.error("[Auth] verifyIdToken error:", e);
     return res.status(401).json({ error: "Invalid token" });
   }
 }
+
+/* === /api/me: ログイン中ユーザーの“真実”を返す（会社・氏名・権限） === */
+app.get("/api/me", verifyFirebaseToken, async (req, res) => {
+  const uid = req.user?.uid;
+  if (!uid) return res.status(401).json({ error: "unauthorized" });
+
+  // 会社は Firebase Custom Claims（provision 時に付与）を第一候補に
+  const companyFromClaim = req.user?.company || null;
+
+  // Neon 側に app_users テーブルがある場合はそこを信頼（なければ claims ベースで返す）
+  const sql = `
+    select u.uid, u.login_id, u.display_name, u.company, u.role
+    from app_users u
+    where u.uid = $1
+    limit 1
+  `;
+  try {
+    let row = null;
+    try {
+      const { rows } = await pool.query(sql, [uid]);
+      row = rows?.[0] || null;
+    } catch { /* app_users が未作成なら claims ベースで返す */ }
+
+    if (row) {
+      return res.json({
+        uid: row.uid,
+        loginId: row.login_id || null,
+        displayName: row.display_name || null,
+        company: row.company || companyFromClaim || null,
+        role: row.role || null,
+      });
+    }
+
+    // app_users が未整備でも最低限返す（プロビジョンで company をクレーム付与済み前提）
+    return res.json({
+      uid,
+      loginId: null,
+      displayName: req.user?.email || null,
+      company: companyFromClaim,
+      role: req.user?.role || null,
+    });
+  } catch (e) {
+    console.error("/api/me error", e);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
 
 /* ====================== 既存: 通知API（メモリ） ====================== */
 // In-memory notifications (replace with DB later)
@@ -187,8 +293,9 @@ app.get("/api/compliance-news", async (_req, res) => {
 
 // POST /api/evidence  … 点呼・アルコール・乗務などの証跡保存
 app.post("/api/evidence", verifyFirebaseToken, async (req, res) => {
-  try {
-    const { company, driverId, kind, payload, occurredAt } = req.body || {};
+   try {
+     let { company, driverId, kind, payload, occurredAt } = req.body || {};
+     company = String(company || req.user?.company || "").trim();
     if (!company || !driverId || !kind || !occurredAt) {
       return res.status(400).json({ error: "Missing fields" });
     }
@@ -229,9 +336,14 @@ app.get("/api/evidence", verifyFirebaseToken, async (req, res) => {
 
 // POST /api/locations  … 位置履歴を追加（5分間隔想定）
 app.post("/api/locations", verifyFirebaseToken, async (req, res) => {
-  try {
-    const { company, driverId, lat, lng, accuracy, recordedAt } = req.body || {};
-    if (!company || !driverId || !lat || !lng) {
+   try {
+     let { company, driverId, lat, lng, accuracy, recordedAt } = req.body || {};
+     company = String(company || req.user?.company || "").trim();
+   const latNum = typeof lat === "number" ? lat : Number(lat);
+  const lngNum = typeof lng === "number" ? lng : Number(lng);
+  const latOk = lat !== "" && Number.isFinite(latNum) && latNum >= -90 && latNum <= 90;
+  const lngOk = lng !== "" && Number.isFinite(lngNum) && lngNum >= -180 && lngNum <= 180;
+  if (!company || !driverId || !latOk || !lngOk) {
       return res.status(400).json({ error: "Missing fields" });
     }
     const q = `
@@ -239,7 +351,15 @@ app.post("/api/locations", verifyFirebaseToken, async (req, res) => {
       values ($1,$2,$3,$4,$5, coalesce($6, now()))
       returning id, recorded_at
     `;
-    const { rows } = await pool.query(q, [company, driverId, lat, lng, accuracy ?? null, recordedAt ?? null]);
+    const accNum = accuracy === "" ? null : (accuracy != null ? Number(accuracy) : null);
+    const { rows } = await pool.query(q, [
+      company,
+      driverId,
+      latNum,
+      lngNum,
+      Number.isFinite(accNum) ? accNum : null,
+      recordedAt ?? null
+    ]);
     res.json({ ok: true, id: rows[0].id, recordedAt: rows[0].recorded_at });
   } catch (e) {
     console.error("POST /api/locations", e);
@@ -256,7 +376,7 @@ app.post("/api/locations", verifyFirebaseToken, async (req, res) => {
      setup?: "none"|"basic"|"standard"|"premium"|"unlimited"  // 既定 none
    }
 ================================================================ */
-app.post("/api/checkout/create", async (req, res) => {
+app.post("/api/checkout/create", verifyFirebaseToken, async (req, res) => {
   try {
     const { companyId, planId, seats, setup = "none" } = req.body || {};
     if (!planId) return res.status(400).json({ error: "planId required" });
@@ -267,7 +387,8 @@ app.post("/api/checkout/create", async (req, res) => {
       const base = PRICES.unlimited.base;
       const extra = PRICES.unlimited.extra;
       if (!base || !extra) return res.status(400).json({ error: "unlimited price ids missing" });
-      const totalSeats = Number.isFinite(seats) ? Math.max(1, Math.floor(seats)) : 100; // 既定100
+      const seatsNum = Number.isFinite(Number(seats)) ? Math.floor(Number(seats)) : 100;
+      const totalSeats = Math.max(1, seatsNum); // 既定100
       line_items.push({ price: base, quantity: 1 });
       // 段階価格：数量=総人数（0-100は自動¥0、101+は¥800/人）
       line_items.push({ price: extra, quantity: totalSeats });
@@ -304,7 +425,7 @@ cancel_url:  `${PUBLIC_WEB_BASE_URL}/billing-result.html?status=cancel`,
    POST /api/quotes/create
    Body: { companyId?, planId, seats?, setup?, customer?: { name?, email? } }
 ================================================================ */
-app.post("/api/quotes/create", async (req, res) => {
+app.post("/api/quotes/create", verifyFirebaseToken, async (req, res) => {
   try {
     const { companyId, planId, seats, setup = "none", customer = {} } = req.body || {};
     if (!planId) return res.status(400).json({ error: "planId required" });
@@ -312,7 +433,8 @@ app.post("/api/quotes/create", async (req, res) => {
     // ① line_items を組み立て（今のままでOK）
     const line_items = [];
     if (planId === "unlimited") {
-      const totalSeats = Number.isFinite(seats) ? Math.max(1, Math.floor(seats)) : 100;
+      const seatsNum = Number.isFinite(Number(seats)) ? Math.floor(Number(seats)) : 100;
+      const totalSeats = Math.max(1, seatsNum);
       line_items.push({ price: PRICES.unlimited.base,  quantity: 1 });
       line_items.push({ price: PRICES.unlimited.extra, quantity: totalSeats });
     } else {
@@ -349,7 +471,8 @@ return res.json({ url });
   }
 });
 
-app.get("/api/debug/price-check", async (_req, res) => {
+app.get("/api/debug/price-check", verifyFirebaseToken, async (_req, res) => {
+  if (process.env.NODE_ENV === "production") return res.status(404).end();
   const ids = {
     basic: PRICES.monthly.basic,
     advanced: PRICES.monthly.advanced,
@@ -383,7 +506,8 @@ app.get("/api/debug/price-check", async (_req, res) => {
 });
 
 // --- Stripeの鍵が有効かチェック（製品を1件リスト） ---
-app.get("/api/debug/stripe-key-check", async (_req, res) => {
+app.get("/api/debug/stripe-key-check", verifyFirebaseToken, async (_req, res) => {
+  if (process.env.NODE_ENV === "production") return res.status(404).end();
   try {
     const p = await stripe.products.list({ limit: 1 });
     res.json({ ok: true, products_count: p.data.length });
@@ -400,20 +524,69 @@ app.get("/api/debug/stripe-key-check", async (_req, res) => {
   }
 });
 
+/* ====================== Drivers: 保存/取得 API ====================== */
+
+// 全ドライバー取得
+app.get("/api/drivers", verifyFirebaseToken, async (req, res) => {
+  try {
+    const company = String(req.query.company || req.user?.company || "").trim();
+    if (!company) return res.status(400).json({ error: "company required" });
+
+    if (!req.user?.company || req.user.company !== company) {
+      return res.status(403).json({ error: "forbidden: company mismatch" });
+    }
+
+    const { rows } = await pool.query(
+      "select data from driver_lists where company = $1",
+      [company]
+    );
+    const data = rows[0]?.data || [];
+    res.json(data);
+  } catch (e) {
+    console.error("GET /api/drivers", e);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
+// 全ドライバー保存（配列ごとアップサート）
+app.post("/api/drivers/save", verifyFirebaseToken, async (req, res) => {
+  try {
+    let { company, drivers } = req.body || {};
+    company = String(company || req.user?.company || "").trim();
+    if (!company || !Array.isArray(drivers)) {
+      return res.status(400).json({ error: "bad request" });
+    }
+
+    if (!req.user?.company || req.user.company !== company) {
+      return res.status(403).json({ error: "forbidden: company mismatch" });
+    }
+
+    await pool.query(
+      `
+      insert into driver_lists (company, data, updated_at)
+      values ($1, $2::jsonb, now())
+      on conflict (company)
+      do update set data = excluded.data, updated_at = now()
+      `,
+      [company, JSON.stringify(drivers)]
+    );
+
+    res.json({ ok: true, count: drivers.length });
+  } catch (e) {
+    console.error("POST /api/drivers/save", e);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
 /* ====================== ヘルスチェック ====================== */
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
-
-/* ====================== サーバ起動 ====================== */
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`API listening on http://localhost:${PORT}`);
-});
 
 // 🔐 管理者Auth作成（会社固定 & 既定Authのセッションに影響させない）
 app.post("/api/admins/provision", verifyFirebaseToken, async (req, res) => {
   try {
-    const { company, loginId, password } = req.body || {};
-    if (!company || !loginId || !password) {
+    let { company, loginId, password } = req.body || {};
+company = String(company || req.user?.company || "").trim();
+if (!company || !loginId || !password) {
       return res.status(400).json({ error: "company/loginId/password required" });
     }
 
@@ -463,7 +636,8 @@ app.post("/api/admins/provision", verifyFirebaseToken, async (req, res) => {
 // 🔐 ドライバーAuth作成（会社固定 & 既定Authのセッションに影響させない）
 app.post("/api/drivers/provision", verifyFirebaseToken, async (req, res) => {
   try {
-    const { company, loginId, password } = req.body || {};
+    let { company, loginId, password } = req.body || {};
+    company = String(company || req.user?.company || "").trim();
     if (!company || !loginId || !password) {
       return res.status(400).json({ error: "company/loginId/password required" });
     }
@@ -511,8 +685,11 @@ app.post("/api/drivers/provision", verifyFirebaseToken, async (req, res) => {
   }
 });
 
+// ... 直前まで各種ルート定義 ...
+
 /* ====================== デバッグ: 環境変数チェック ====================== */
-app.get("/api/debug/env-check", (_req, res) => {
+app.get("/api/debug/env-check", verifyFirebaseToken, (_req, res) => {
+  if (process.env.NODE_ENV === "production") return res.status(404).end();
   res.json({
     STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY,
     PUBLIC_WEB_BASE_URL: process.env.PUBLIC_WEB_BASE_URL || null,
@@ -522,12 +699,30 @@ app.get("/api/debug/env-check", (_req, res) => {
       pro: !!process.env.PRICE_PRO,
       elite: !!process.env.PRICE_ELITE,
       premium: !!process.env.PRICE_PREMIUM,
-      unl_base: !!process.env.PRICE_UNL_BASE,     // 追加
-      unl_extra: !!process.env.PRICE_UNL_EXTRA,   // 追加
+      unl_base: !!process.env.PRICE_UNL_BASE,
+      unl_extra: !!process.env.PRICE_UNL_EXTRA,
       setup_basic: !!process.env.PRICE_SETUP_BASIC,
       setup_standard: !!process.env.PRICE_SETUP_STANDARD,
       setup_premium: !!process.env.PRICE_SETUP_PREMIUM,
       setup_unlimited: !!process.env.PRICE_SETUP_UNLIMITED,
     },
   });
+});
+
+// ⬇ 全ルート定義の“最後”にエラーハンドラ
+app.use((err, _req, res, _next) => {
+  if (err?.message?.startsWith("CORS blocked:")) {
+    return res.status(403).json({
+      error: "cors_blocked",
+      origin: err.message.replace("CORS blocked: ", "")
+    });
+  }
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: "internal_server_error" });
+});
+
+/* ====================== サーバ起動（最下部） ====================== */
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => {
+  console.log(`API listening on http://localhost:${PORT}`);
 });

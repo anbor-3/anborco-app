@@ -210,48 +210,48 @@ export default function AdminDailyReport() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* ヘッダー：白文字問題を修正 */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-slate-900 tracking-wide">
-  📋 <span className="align-middle">日報管理</span>
-  <span className="ml-2 text-sm text-slate-500">- Active Driver Reports -</span>
-</h1>
-        <div className="flex items-center gap-3">
-          {!isDemo && (
-            <span className="text-xs text-gray-500">
-              ⏱ 最終更新: {lastUpdatedAt || '—'}（自動更新 10秒）
-            </span>
-          )}
-          <button
-            className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 text-sm"
-            onClick={() => {
-              if (selected) {
-                setEditData({ ...selected });
-                setIsEditing(true);
-              } else {
-                alert("先に日報を選択してください（表示ボタン）");
-              }
-            }}
-          >
-            編集
-          </button>
-          <button
-            className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700 text-sm"
-            onClick={async () => {
-              if (!selected) {
-                alert("差し戻す日報を選択してください（表示ボタン）");
-                return;
-              }
-              if (window.confirm("この日報を差し戻しますか？\nドライバーに再提出を依頼します。")) {
-                await handleStatusUpdate(selected.id, "returned");
-                alert("差し戻しました。");
-              }
-            }}
-          >
-            差し戻し
-          </button>
-        </div>
-      </div>
+      {/* ヘッダー */}
+<div className="flex items-center justify-between">
+  <h1 className="text-3xl font-bold text-white tracking-wide">
+    📋 <span className="align-middle">日報管理</span>
+    <span className="ml-2 text-sm text-white">- Active Driver Reports -</span>
+  </h1>
+  <div className="flex items-center gap-3">
+    {!isDemo && (
+      <span className="text-xs text-gray-300">
+        ⏱ 最終更新: {lastUpdatedAt || '—'}（自動更新 10秒）
+      </span>
+    )}
+    <button
+      className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 text-sm"
+      onClick={() => {
+        if (selected) {
+          setEditData({ ...selected });
+          setIsEditing(true);
+        } else {
+          alert("先に日報を選択してください（表示ボタン）");
+        }
+      }}
+    >
+      編集
+    </button>
+    <button
+      className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700 text-sm"
+      onClick={async () => {
+        if (!selected) {
+          alert("差し戻す日報を選択してください（表示ボタン）");
+          return;
+        }
+        if (window.confirm("この日報を差し戻しますか？\nドライバーに再提出を依頼します。")) {
+          await handleStatusUpdate(selected.id, "returned");
+          alert("差し戻しました。");
+        }
+      }}
+    >
+      差し戻し
+    </button>
+  </div>
+</div>
 
       {/* 稼働中のみ（ヘッダー項目は変更せず、UIを刷新） */}
       <div className="overflow-x-auto rounded-2xl border border-gray-200 shadow-sm bg-white">

@@ -29,9 +29,27 @@ const DriverPasswordChange = () => {
   return (
     <div className="space-y-4 max-w-md">
       <h1 className="text-2xl font-bold">🔑 パスワード変更 <span className="text-sm text-gray-500">- Change Password -</span></h1>
-      <input type="password" placeholder="現在のパスワード" value={current} onChange={e=>setCurrent(e.target.value)} className="border w-full px-2 py-1"/>
-      <input type="password" placeholder="新パスワード" value={nextPass} onChange={e=>setNextPass(e.target.value)} className="border w-full px-2 py-1"/>
-      <input type="password" placeholder="新パスワード(確認)" value={confirm} onChange={e=>setConfirm(e.target.value)} className="border w-full px-2 py-1"/>
+      <input
+  type="password"
+  placeholder="現在のパスワード"
+  value={current}
+  onChange={(e) => setCurrent(e.target.value)}
+  className="border w-full px-2 py-1 text-black"
+/>
+<input
+  type="password"
+  placeholder="新パスワード"
+  value={nextPass}
+  onChange={(e) => setNextPass(e.target.value)}
+  className="border w-full px-2 py-1 text-black"
+/>
+<input
+  type="password"
+  placeholder="新パスワード(確認)"
+  value={confirm}
+  onChange={(e) => setConfirm(e.target.value)}
+  className="border w-full px-2 py-1 text-black"
+/>
       <button onClick={handleChange} className="bg-green-600 text-white px-4 py-2 rounded">変更</button>
       {msg && <p className="text-red-600">{msg}</p>}
     </div>

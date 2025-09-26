@@ -22,6 +22,10 @@ const API_BASE: string =
   // Vite
   (((typeof import.meta !== "undefined" ? (import.meta as any) : undefined)?.env?.VITE_API_BASE_URL) as string) ||
   "";
+  if (typeof window !== "undefined" && process.env.NODE_ENV === "production" && !API_BASE) {
+  // 相対パスで意図しないオリジンに飛ばさない
+  throw new Error("NEXT_PUBLIC_API_BASE / VITE_API_BASE_URL が本番で未設定です");
+}
 
 /** base と path を安全結合 */
 function joinURL(base: string, path: string) {
@@ -55,48 +59,46 @@ async function apiJSON<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+/** 認証ヘッダを安全に付与 */
+async function withAuth(init?: RequestInit) {
+  const idToken = await getAuth().currentUser?.getIdToken?.();
+  return {
+    ...(init || {}),
+    headers: {
+      ...(init?.headers || {}),
+      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+    },
+  } as RequestInit;
+}
 /** ===== Admins API ===== */
 const AdminsAPI = {
-  list: async (company: string) => {
-    const idToken = await getAuth().currentUser?.getIdToken?.();
+  list: async (company: string, init?: RequestInit) => {
     return apiJSON<AdminUser[]>(
       `/api/admins?company=${encodeURIComponent(company)}`,
-      { headers: idToken ? { Authorization: `Bearer ${idToken}` } : {} }
+      await withAuth(init)
     );
   },
   create: async (payload: Omit<AdminUser, "id"> & { password?: string }) => {
-  const idToken = await getAuth().currentUser?.getIdToken?.();
-  try {
-    return await apiJSON<AdminUser>(`/api/admins`, {
+   try {
+    return await apiJSON<AdminUser>(`/api/admins`, await withAuth({
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    });
+   }));
   } catch (err: any) {
     // 404/415(HTML応答) 等は上位でローカル保存へフォールバックさせる
     throw err;
   }
 },
   update: async (id: number, patch: Partial<AdminUser>) => {
-    const idToken = await getAuth().currentUser?.getIdToken?.();
-    return apiJSON<AdminUser>(`/api/admins/${id}`, {
+    return apiJSON<AdminUser>(`/api/admins/${id}`, await withAuth({
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
-    });
+    }));
   },
   remove: async (id: number) => {
-    const idToken = await getAuth().currentUser?.getIdToken?.();
-    return apiJSON<{}>(`/api/admins/${id}`, {
-      method: "DELETE",
-      headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
-    });
+    return apiJSON<{}>(`/api/admins/${id}`, await withAuth({ method: "DELETE" }));
   },
 };
 
@@ -104,9 +106,10 @@ const AdminsAPI = {
 async function resolveCompany(): Promise<string> {
   // 同期ソース
   try {
-    const cur = JSON.parse(localStorage.getItem("currentUser") || "{}");
-    if (cur?.company) return String(cur.company).trim();
-  } catch {}
+  const res = await getAuth().currentUser?.getIdTokenResult?.(true);
+  const claim = (res?.claims as any)?.company;
+  if (claim) return String(claim).trim();
+} catch {}
   try {
     const admin = JSON.parse(localStorage.getItem("loggedInAdmin") || "{}");
     if (admin?.company) return String(admin.company).trim();
@@ -116,14 +119,12 @@ async function resolveCompany(): Promise<string> {
   const qs = new URLSearchParams(window.location.search).get("company");
   if (qs) return qs.trim();
 
-  // 非同期ソース
+  // 非同期ソース（API: 要認証）
   try {
-    const res = await getAuth().currentUser?.getIdTokenResult?.();
-    const claim = (res?.claims as any)?.company;
-    if (claim) return String(claim).trim();
-  } catch {}
-  try {
-    const me = await apiJSON<{ company?: string }>(`/api/me`).catch(() => null as any);
+    const idToken = await getAuth().currentUser?.getIdToken?.();
+    const me = await apiJSON<{ company?: string }>(`/api/me`, {
+      headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
+    }).catch(() => null as any);
     if (me?.company) return String(me.company).trim();
   } catch {}
 
@@ -148,20 +149,52 @@ const generateLoginCredentials = (existingAdmins: AdminUser[]) => {
 
 /** 認証ユーザー作成（UID 取得） */
 const provisionAdminAuth = async (company: string, loginId: string, password: string) => {
-  const idToken = await getAuth().currentUser?.getIdToken?.();
-  return apiJSON<{ uid: string; email: string }>(`/api/admins/provision`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-    },
-    body: JSON.stringify({ company, loginId, password }),
-  });
+  return apiJSON<{ uid: string; email: string }>(`/api/admins/provision`,
+    await withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ company, loginId, password }),
+    })
+  );
 };
+
+export function AttachmentLink({ att }: { att: { name: string; dataUrl: string } }) {
+  const blobUrl = React.useMemo(() => {
+    try {
+      const [meta, base] = (att.dataUrl || "").split(",");
+      const mime = meta?.split(":")[1]?.split(";")[0] || "application/octet-stream";
+      const bin = atob(base || "");
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      return URL.createObjectURL(new Blob([buf], { type: mime }));
+    } catch {
+      return "";
+    }
+  }, [att.dataUrl]);
+
+  React.useEffect(() => {
+    return () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [blobUrl]);
+
+  if (!blobUrl) return null;
+  return (
+    <a
+      href={blobUrl}
+      download={att.name}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-blue-700 underline hover:text-blue-800"
+    >
+      {att.name}
+    </a>
+  );
+}
 
 /** ====== コンポーネント ====== */
 const AdminManager = () => {
-  const ADMIN_STORAGE_KEY = "adminMaster"; // 開発時のみのフォールバック用
+  const storageKeyFor = (c: string) => `adminMaster_${c || "unknown"}`;
   const [company, setCompany] = useState<string>("");
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [isAdding, setIsAdding] = useState(false);
@@ -192,30 +225,50 @@ const AdminManager = () => {
   }, []);
 
   useEffect(() => {
-    if (!company) return;
-    const load = async () => {
-      try {
-        const list = await AdminsAPI.list(company);
-        setAdmins(list ?? []);
-      } catch (e: any) {
-  const s = e?.status ?? 0;
-  if ([0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
-    // ✅ 本番でも localStorage にフォールバック（API未実装の間の暫定策）
-    const raw = localStorage.getItem(ADMIN_STORAGE_KEY);
-    setAdmins(raw ? JSON.parse(raw) : []);
-  } else {
-    throw e;
+  if (!company) return;
+
+  // ① 旧キーから新キーへ一度だけ移行
+  try {
+    const oldStr = localStorage.getItem("adminMaster");
+    const newKey = storageKeyFor(company);
+    const newStr = localStorage.getItem(newKey);
+    if (oldStr && !newStr) {
+      const old = JSON.parse(oldStr);
+      const mine = Array.isArray(old) ? old.filter((a: any) => a?.company === company) : [];
+      if (mine.length) {
+        localStorage.setItem(newKey, JSON.stringify(mine));
+        console.info(`[migrate] moved ${mine.length} admins to ${newKey}`);
+      }
+    }
+  } catch (e) {
+    console.warn("adminMaster migration skipped:", e);
   }
-}
-    };
-    load();
-  }, [company]);
+
+  // ② 一覧ロード（API → 失敗時は会社別ローカル）
+  const ac = new AbortController();
+(async () => {
+  try {
+    const list = await AdminsAPI.list(company, { signal: ac.signal });
+    if (!ac.signal.aborted) setAdmins(list ?? []);
+  } catch (e: any) {
+      const s = e?.status ?? 0;
+      if ([0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
+        const raw = !ac.signal.aborted ? localStorage.getItem(storageKeyFor(company)) : null;
+        if (!ac.signal.aborted) setAdmins(raw ? JSON.parse(raw) : []);
+      } else {
+        if (!ac.signal.aborted) throw e;
+      }
+    }
+  })();
+
+  return () => ac.abort();
+}, [company]);
 
   /** 開発フォールバック時だけ使う */
   const persistLocal = (next: AdminUser[]) => {
-    localStorage.setItem(ADMIN_STORAGE_KEY, JSON.stringify(next));
-    setAdmins(next);
-  };
+  localStorage.setItem(storageKeyFor(company), JSON.stringify(next));
+  setAdmins(next);
+};
 
   /** 追加 */
   const handleAdd = async () => {
@@ -270,12 +323,8 @@ const AdminManager = () => {
 
       const list = await AdminsAPI.list(company);
       setAdmins(list ?? []);
-      alert(
-        `✅ 管理者を追加しました（会社: ${company}）\n` +
-        `ログインID: ${loginId}\n` +
-        `初回パスワード: ${password}\n\n` +
-        `※パスワードは今回のみ表示し、保存しません。`
-      );
+      try { await navigator.clipboard.writeText(`loginId: ${loginId}\npassword: ${password}`); } catch {}
+ alert(`✅ 管理者を追加しました（会社: ${company}）\nログイン情報をクリップボードにコピーしました。`);
       setDraft(emptyAdmin);
       setIsAdding(false);
     } catch (e: any) {
@@ -284,7 +333,7 @@ const AdminManager = () => {
     // ✅ 本番でもローカル保存フォールバック
     const next = [
       ...admins,
-      { ...draft, id: admins.length, company, uid: draft.uid || "local-uid", loginId },
+      { ...draft, id: Date.now(), company, uid: draft.uid || `local-${crypto?.randomUUID?.() || Date.now()}`, loginId },
     ];
     persistLocal(next);
     alert(
@@ -296,7 +345,10 @@ const AdminManager = () => {
     setIsAdding(false);
   } else {
     console.error(e);
-    alert("追加に失敗しました。権限・ネットワーク・API設定を確認してください。");
+    alert(
+   "追加に失敗しました。権限・ネットワーク・API設定を確認してください。\n" +
+   `API_BASE=${API_BASE || "(relative)"}`
+ );
   }
 }
   };
@@ -319,17 +371,17 @@ const AdminManager = () => {
       setEditRowId(null);
       setDraft(emptyAdmin);
     } catch (e: any) {
-      const s = e?.status ?? 0;
-      if (!isProd && [0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
-        const next = admins.map((a) => (a.id === editRowId ? { ...draft, company } as AdminUser : a));
-        persistLocal(next);
-        setEditRowId(null);
-        setDraft(emptyAdmin);
-      } else {
-        console.error(e);
-        alert("保存に失敗しました。");
-      }
-    }
+  const s = e?.status ?? 0;
+  if ([0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
+    const next = admins.map((a) => (a.id === editRowId ? { ...draft, company } as AdminUser : a));
+    persistLocal(next);
+    setEditRowId(null);
+    setDraft(emptyAdmin);
+  } else {
+    console.error(e);
+    alert("保存に失敗しました。");
+  }
+}
   };
 
   /** 削除 */
@@ -340,21 +392,26 @@ const AdminManager = () => {
       const list = await AdminsAPI.list(company);
       setAdmins(list ?? []);
     } catch (e: any) {
-      const s = e?.status ?? 0;
-      if (!isProd && [0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
-        const next = admins.filter((a) => a.id !== rowId).map((a, idx) => ({ ...a, id: idx }));
-        persistLocal(next);
-      } else {
-        console.error(e);
-        alert("削除に失敗しました。");
-      }
-    }
+  const s = e?.status ?? 0;
+  if ([0, 401, 403, 404, 415, 500, 502, 503].includes(s)) {
+    const next = admins.filter((a) => a.id !== rowId);
+    persistLocal(next);
+    alert("（ローカル上で）削除しました。API接続時はサーバ側でも削除されます。");
+  } else {
+    console.error(e);
+    alert("削除に失敗しました。");
+  }
+}
   };
 
   /** 添付（今回も dataUrl のまま。必要なら API 化に差し替え） */
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
-    const files = Array.from(e.target.files).slice(0, 10);
+    const files = Array.from(e.target.files).slice(0, 10).filter(f => {
+    const okType = /^(image\/|application\/pdf)/.test(f.type);
+    const okSize = f.size <= 10 * 1024 * 1024; // 10MB
+    return okType && okSize;
+  });
     const attachments = await Promise.all(
       files.map(
         (file) =>
@@ -386,7 +443,7 @@ const AdminManager = () => {
         className="group text-center bg-white hover:bg-emerald-50 transition-colors"
       >
         {/* 操作列（左固定で視認性UP） */}
-        <td className="sticky left-0 z-[1] bg-white border-r border-slate-200 px-3 py-2 w-36 shadow-[1px_0_0_0_rgba(226,232,240,1)]">
+        <td className="sm:sticky sm:left-0 z-[1] bg-white border-r border-slate-200 px-3 py-2 w-36 shadow-[1px_0_0_0_rgba(226,232,240,1)]">
           {isEdit ? (
             <div className="flex gap-2 justify-center">
               <button
@@ -405,7 +462,7 @@ const AdminManager = () => {
           ) : (
             <div className="flex gap-2 justify-center">
               <button
-                className="bg-blue-600 text-white px-3 py-1 rounded-md text-xs hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                className="bg-blue-600 text-white px-3 py-2 rounded-md text-sm sm:text-xs hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
                 onClick={() => startEdit(admin)}
               >
                 編集
@@ -449,20 +506,31 @@ const AdminManager = () => {
 
         {/* 視認性向上：UID/ログインIDをバッジ表示（項目はそのまま） */}
         <td className="px-4 py-2">
-          <span className="inline-flex items-center rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-            {admin.uid}
-          </span>
-        </td>
+  <span className="inline-flex items-center rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+    {admin.uid}
+  </span>
+</td>
 
-        <td className="px-4 py-2">
-          <span className="inline-flex items-center rounded-full border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
-            {admin.loginId}
-          </span>
-        </td>
+<td className="px-4 py-2 whitespace-nowrap">
+  <span
+    title={admin.loginId}
+    className="inline-flex items-center rounded-full border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 font-mono tracking-wide select-all"
+  >
+    {admin.loginId}
+  </span>
+  <button
+    onClick={() => navigator.clipboard.writeText(admin.loginId)}
+    className="ml-2 align-middle text-[11px] underline text-indigo-700 hover:text-indigo-800 focus:outline-none focus:ring-2 focus:ring-indigo-300 rounded-sm px-1"
+    aria-label="ログインIDをコピー"
+    type="button"
+  >
+    コピー
+  </button>
+</td>
 
-        <td className="px-4 py-2">
-          <span className="tracking-widest text-slate-500">••••••</span>
-        </td>
+<td className="px-4 py-2">
+  <span className="tracking-widest text-slate-500">••••••</span>
+</td>
 
         {customFields.map((field, idx) => (
           <td key={idx} className="px-4 py-2">
@@ -483,11 +551,12 @@ const AdminManager = () => {
           {isEdit ? (
             <div>
               <input
-                type="file"
-                multiple
-                onChange={handleFileChange}
-                className="mb-2 block text-sm text-slate-700"
-              />
+  type="file"
+  multiple
+  accept="image/*,application/pdf"
+  onChange={handleFileChange}
+  className="mb-2 block text-sm text-slate-700"
+/>
               <ul className="text-xs space-y-1">
                 {draft.attachments.map((att, idx) => (
                   <li key={idx} className="flex items-center justify-between">
@@ -511,28 +580,12 @@ const AdminManager = () => {
             </div>
           ) : (
             <ul className="text-xs space-y-1">
-              {admin.attachments?.map((att, idx) => {
-                const byteString = atob(att.dataUrl.split(",")[1] || "");
-                const mimeString = (att.dataUrl.split(",")[0]?.split(":")[1]?.split(";")[0]) || "application/octet-stream";
-                const ab = new ArrayBuffer(byteString.length);
-                const ia = new Uint8Array(ab);
-                for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
-                const blob = new Blob([ab], { type: mimeString });
-                const blobUrl = URL.createObjectURL(blob);
-                return (
-                  <li key={idx}>
-                    <a
-                      href={blobUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-700 underline hover:text-blue-800"
-                    >
-                      {att.name}
-                    </a>
-                  </li>
-                );
-              })}
-            </ul>
+   {admin.attachments?.map((att, idx) => (
+     <li key={idx}>
+       <AttachmentLink att={att} />
+     </li>
+   ))}
+ </ul>
           )}
         </td>
       </tr>
@@ -549,7 +602,7 @@ const AdminManager = () => {
       <button
         className="mb-4 bg-blue-600 text-white px-4 py-2 rounded-md shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
         onClick={() => {
-          setDraft({ ...emptyAdmin, company }); // 会社は固定
+          setDraft({ ...emptyAdmin, company }); // 会社は固定（ドラフト側も固定表示）
           setIsAdding(true);
         }}
       >
@@ -557,7 +610,7 @@ const AdminManager = () => {
       </button>
 
       {/* === ここから革新的テーブルUI（項目は一切変更なし） === */}
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm relative">
+      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm relative [-webkit-overflow-scrolling:touch]">
         {/* 上部バー（情報帯） */}
         <div className="flex items-center justify-between px-4 py-2 border-b border-slate-200 bg-gradient-to-r from-emerald-50 to-teal-50">
           <span className="text-xs text-slate-600">
@@ -568,7 +621,7 @@ const AdminManager = () => {
           </span>
         </div>
 
-        <table className="min-w-full text-sm">
+        <table className="min-w-[900px] sm:min-w-full text-sm">
           <thead className="sticky top-0 z-[2] bg-slate-50/95 backdrop-blur supports-[backdrop-filter]:bg-slate-50/80">
             <tr className="text-left text-slate-700">
               <th className="sticky left-0 z-[3] bg-slate-50/95 px-3 py-3 w-36 font-semibold border-r border-slate-200">操作</th>
@@ -627,6 +680,7 @@ const AdminManager = () => {
                   <input
                     type="file"
                     multiple
+                    accept="image/*,application/pdf"
                     onChange={handleFileChange}
                     className="mb-2 block text-sm text-slate-700"
                   />
