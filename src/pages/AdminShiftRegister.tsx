@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { apiURL } from "@/lib/apiBase";
 
 /* ========================= Types ========================= */
 
@@ -66,21 +67,6 @@ const getDaysOfMonth = (year: number, month: number) => {
    未設定なら空文字で同一オリジンの相対パスを叩く
 ========================================================================== */
 
-const API_BASE: string =
-  // Next.js
-  (((typeof process !== "undefined" ? (process as any) : undefined)?.env?.NEXT_PUBLIC_API_BASE) as string) ||
-  // Vite
-  (((typeof import.meta !== "undefined" ? (import.meta as any) : undefined)?.env?.VITE_API_BASE_URL) as string) ||
-  "";
-
-/** base と path を安全に結合（スラッシュ重複/欠落を吸収） */
-const joinURL = (base: string, path: string) => {
-  if (!base) return path; // base 未設定なら相対パスのまま
-  const b = base.replace(/\/+$/, "");
-  const p = path.replace(/^\/+/, "");
-  return `${b}/${p}`;
-};
-
 /** ヘッダーを常にプレーン連想配列に統一 */
 type PlainHeaders = Record<string, string>;
 
@@ -89,7 +75,7 @@ async function apiJSON<T>(
   path: string,
   init?: Omit<RequestInit, "headers"> & { headers?: PlainHeaders }
 ): Promise<T> {
-  const url = joinURL(API_BASE, path);
+  const url = apiURL(path);
 
   // ← Headers / string[][] を禁止して、必ずプレーン連想配列にする
   const headers: PlainHeaders = {

@@ -1,16 +1,17 @@
 "use client";
 import  { useEffect, useState } from "react";
+import { getAuth } from "firebase/auth";
 
-// ✅ APIの基点（basePathとは切り離す）
-// - NEXT_PUBLIC_API_BASE_URL があればそれを使う（例: https://api.anbor.co.jp）
-// - 無ければ同一オリジンの /api を使う
 const API_BASE_URL =
   (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_API_BASE_URL)
     ? String((process as any).env.NEXT_PUBLIC_API_BASE_URL).replace(/\/$/, "")
-    : "";
+    : (typeof window !== "undefined" ? `${window.location.origin}` : "") + "/api";
 
-const api = (path: string) =>
-  `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+const api = (path: string) => {
+  const base = API_BASE_URL.replace(/\/$/, "");
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${p}`;
+};
 
 // ユーティリティ
 const toMs = (s?: string) => (s ? new Date(s).getTime() : 0);
@@ -80,8 +81,15 @@ const safeParse = <T,>(s: string | null, fallback: T): T => {
 };
 
 const getMatchedTarget = (message: string): string => {
-  const drivers = safeParse<any[]>(localStorage.getItem("driverList"), []);
-  const vehicles = safeParse<any[]>(localStorage.getItem("vehicleList"), []);
+  const company = localStorage.getItem("company") || "";
+  // よくある保存先も順に見る（会社別キー/旧キー）
+  const drivers =
+    safeParse<any[]>(localStorage.getItem(`driverList_${company}`), []) ||
+    safeParse<any[]>(localStorage.getItem("driverList"), []) ||
+    safeParse<any[]>(localStorage.getItem("driverMaster"), []);
+  const vehicles =
+    safeParse<any[]>(localStorage.getItem(`vehicleList_${company}`), []) ||
+    safeParse<any[]>(localStorage.getItem("vehicleList"), []);
   const normalizedMsg = normalize(message);
 
   for (const d of drivers) {
@@ -112,11 +120,15 @@ const AdminNotificationList = () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(api("/api/notifications"), {
-  credentials: "include",
-  signal: ac?.signal,
-  headers: { Accept: "application/json" },
-});
+      const idToken = await getAuth().currentUser?.getIdToken?.();
+      const res = await fetch(api("/notifications"), {
+        credentials: "include",
+        signal: ac?.signal,
+        headers: {
+          Accept: "application/json",
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
+      });
 
 // 404 → “通知なし”として扱う（赤いエラーは出さない）
 if (res.status === 404) {
@@ -151,12 +163,15 @@ setNotifications(data);
 
   const markAsRead = async (id: string) => {
     try {
-      const res = await fetch(api(`/api/notifications/${id}/read`), {
+      const idToken = await getAuth().currentUser?.getIdToken?.();
+      await safeFetchJSON(api(`/notifications/${id}/read`), {
         method: "POST",
         credentials: "include",
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
       });
-      if (!res.ok) throw new Error();
       await reload(); // 即時反映
     } catch {
       alert("既読に失敗しました");
@@ -165,12 +180,15 @@ setNotifications(data);
 
   const deleteNotification = async (id: string) => {
     try {
-      const res = await fetch(api(`/api/notifications/${id}`), {
+      const idToken = await getAuth().currentUser?.getIdToken?.();
+      await safeFetchJSON(api(`/notifications/${id}`), {
         method: "DELETE",
         credentials: "include",
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
       });
-      if (!res.ok) throw new Error();
       await reload(); // 即時反映
     } catch {
       alert("削除に失敗しました");

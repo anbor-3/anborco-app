@@ -2,12 +2,7 @@
 import { useEffect, useState } from "react";
 import { getAuth } from "firebase/auth";
 import { PLAN_FEATURES, type PlanId } from "./features";
-
-const API_BASE =
-  (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_API_BASE_URL)
-    ? String((process as any).env.NEXT_PUBLIC_API_BASE_URL).replace(/\/$/, "")
-    : "";
-const api = (p: string) => `${API_BASE}${p.startsWith("/") ? p : `/${p}`}`;
+import { apiURL } from "@/lib/apiBase";
 
 // プラン名→ID の簡易マップ（localStorage の name しか無い場合の救済）
 const NAME_TO_ID: Record<string, PlanId> = {
@@ -21,7 +16,7 @@ const NAME_TO_ID: Record<string, PlanId> = {
 
 type HookState = {
   plan: PlanId;
-  features: typeof PLAN_FEATURES[PlanId];
+  features: (typeof PLAN_FEATURES)[PlanId];
   maxUsers: number | null; // null = 無制限
 };
 
@@ -39,7 +34,7 @@ export function useFeatures(company: string): HookState {
       try {
         const auth = getAuth();
         const idToken = await auth.currentUser?.getIdToken();
-        const res = await fetch(api(`/api/company/config?company=${encodeURIComponent(company)}`), {
+        const res = await fetch(apiURL(`/api/company/config?company=${encodeURIComponent(company)}`), {
           credentials: "include",
           headers: { Authorization: `Bearer ${idToken || ""}`, Accept: "application/json" },
         });

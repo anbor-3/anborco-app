@@ -125,10 +125,15 @@ const VehiclesAPI = {
 const DriversAPI = {
   list: async (company: string) => {
     const idToken = await getAuth().currentUser?.getIdToken?.();
-    return apiJSON<Driver[]>(
+    // API は AdminDriverManager と同じ /api/drivers を使用
+    // name が空のものは除外。id は uid/loginId/name のいずれかから安全に採取
+    const raw = await apiJSON<any[]>(
       `/api/drivers?company=${encodeURIComponent(company)}`,
       { headers: idToken ? { Authorization: `Bearer ${idToken}` } : {} }
     );
+    return (Array.isArray(raw) ? raw : [])
+      .filter(d => d && typeof d.name === "string" && d.name.trim().length > 0)
+      .map(d => ({ id: String(d.id ?? d.uid ?? d.loginId ?? d.name), name: String(d.name) })) as Driver[];
   },
 };
 
@@ -242,53 +247,56 @@ const VehicleManager: React.FC = () => {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [company, vehicles]);
 
-  /** ===== サーバ再取得 ===== */
   const reloadFromServer = React.useCallback(async () => {
-    if (!company) return;
-    let mounted = true;
-    try {
-      const [vList, dList] = await Promise.all([
-        VehiclesAPI.list(company),
-        DriversAPI.list(company),
-      ]);
+  if (!company) return;
+  let mounted = true;
+  try {
+    const [vList, dList] = await Promise.all([
+      VehiclesAPI.list(company),
+      DriversAPI.list(company),
+    ]);
+    if (!mounted) return;
+
+    // 車両：サーバ優先 + ドラフト維持
+    setVehicles(prev => {
+      const drafts = prev.filter(x => x.id < 0);
+      const server = Array.isArray(vList) ? vList : [];
+      localStorage.setItem(vehicleStorageKey(company), JSON.stringify([...drafts, ...server]));
+      return [...drafts, ...server];
+    });
+
+    // ドライバー：API結果（名前ありのみ）
+    setDrivers(Array.isArray(dList) ? dList : []);
+  } catch (e: any) {
+    const s = e?.status ?? 0;
+    const allow = [0, 401, 403, 404, 415, 500, 502, 503];
+    if (allow.includes(s)) {
+      // 車両：ローカルへフォールバック
+      const localV = JSON.parse(localStorage.getItem(vehicleStorageKey(company)) || "[]") as Vehicle[];
+
+      // ★ ドライバー：driverMaster（会社別）へフォールバック
+      const dmRaw = JSON.parse(localStorage.getItem("driverMaster") || "[]");
+      const localDrivers: Driver[] = (Array.isArray(dmRaw) ? dmRaw : [])
+        .filter(d => d && d.company === company && typeof d.name === "string" && d.name.trim().length > 0)
+        .map(d => ({ id: String(d.id ?? d.uid ?? d.loginId ?? d.name), name: String(d.name) }));
+
       if (!mounted) return;
-      // 画面上のドラフト（負ID）は絶対保持
+
       setVehicles(prev => {
         const drafts = prev.filter(x => x.id < 0);
-        const server = Array.isArray(vList) ? vList : [];
-        // サーバ成功時もローカルにキャッシュ（戻っても消えない）
-        localStorage.setItem(vehicleStorageKey(company), JSON.stringify([...drafts, ...server]));
-        return [...drafts, ...server];
+        const lv = Array.isArray(localV) ? localV : [];
+        const ids = new Set(drafts.map(d => d.id));
+        return [...drafts, ...lv.filter(v => !ids.has(v.id))];
       });
-      setDrivers(dList ?? []);
-    } catch (e: any) {
-      const s = e?.status ?? 0;
-      const allow = [0, 401, 403, 404, 415, 500, 502, 503];
-      if (allow.includes(s)) {
-        const localV = JSON.parse(localStorage.getItem(vehicleStorageKey(company)) || "[]") as Vehicle[];
-        const s1 = localStorage.getItem(`driverList_${company}`);
-        const s2 = localStorage.getItem("driverList");
-        const localDRaw = JSON.parse(s1 || s2 || "[]") as Array<{ id?: string; name?: string }>;
-        if (!mounted) return;
-        setVehicles(prev => {
-          const drafts = prev.filter(x => x.id < 0);
-          const lv = Array.isArray(localV) ? localV : [];
-          // ローカルも重複なくマージ（負ID優先）
-          const ids = new Set(drafts.map(d => d.id));
-          const merged = [...drafts, ...lv.filter(v => !ids.has(v.id))];
-          return merged;
-        });
-        setDrivers(
-          Array.isArray(localDRaw)
-            ? localDRaw.filter(x => x && x.name).map((x, i) => ({ id: x.id ?? String(i + 1), name: x.name! }))
-            : []
-        );
-      } else {
-        console.error(e);
-      }
+
+      // フォールバックのドライバー（“安保ルコ”のような余計なエントリは driverMaster に居ないので表示されません）
+      setDrivers(localDrivers);
+    } else {
+      console.error(e);
     }
-    return () => { mounted = false; };
-  }, [company]);
+  }
+  return () => { mounted = false; };
+}, [company]);
 
   // 初期ロード
   React.useEffect(() => {
@@ -330,7 +338,7 @@ const VehicleManager: React.FC = () => {
 
   const handleAdd = () => {
     const tempId = -(Date.now() + Math.floor(Math.random() * 1000));
-    const firstDriverName = drivers[0]?.name ?? "";
+    const firstDriverName = driverOptions[0] ?? "";
     const newV: Vehicle = {
       id: tempId,
       type: "",
@@ -483,7 +491,8 @@ const VehicleManager: React.FC = () => {
     }
   };
 
-  const driverOptions = drivers.map((d) => d.name);
+  const driverOptions = Array.from(new Set(drivers.map(d => d.name)))
+  .sort((a, b) => a.localeCompare(b, "ja"));
 
   if (loading) return <div className="p-6">読み込み中...</div>;
 

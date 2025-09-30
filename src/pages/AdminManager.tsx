@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { getAuth } from "firebase/auth";
+import { API_BASE, apiURL, joinURL } from "@/lib/apiBase";
 
 /** ===== 型定義 ===== */
 type AdminUser = {
@@ -15,29 +16,9 @@ type AdminUser = {
   [key: string]: any;
 };
 
-/** ===== API 基盤 ===== */
-const API_BASE: string =
-  // Next.js
-  (((typeof process !== "undefined" ? (process as any) : undefined)?.env?.NEXT_PUBLIC_API_BASE) as string) ||
-  // Vite
-  (((typeof import.meta !== "undefined" ? (import.meta as any) : undefined)?.env?.VITE_API_BASE_URL) as string) ||
-  "";
-  if (typeof window !== "undefined" && process.env.NODE_ENV === "production" && !API_BASE) {
-  // 相対パスで意図しないオリジンに飛ばさない
-  throw new Error("NEXT_PUBLIC_API_BASE / VITE_API_BASE_URL が本番で未設定です");
-}
-
-/** base と path を安全結合 */
-function joinURL(base: string, path: string) {
-  if (!base) return path;
-  const b = base.replace(/\/+$/, "");
-  const p = path.replace(/^\/+/, "");
-  return `${b}/${p}`;
-}
-
 /** JSON フェッチ（HTMLが返る等は 415 で投げる） */
 async function apiJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = joinURL(API_BASE, path);
+  const url = apiURL(path); // ← 共通ユーティリティを使用
   const res = await fetch(url, {
     credentials: "include",
     headers: { Accept: "application/json", ...(init?.headers || {}) },

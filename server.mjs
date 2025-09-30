@@ -151,6 +151,14 @@ async function verifyFirebaseToken(req, res, next) {
   }
 }
 
+/* ===== ユーザー取得ユーティリティ（uid or email で取得） ===== */
+async function getUserByUidOrEmail({ uid, email }) {
+  const auth = admin.auth();
+  if (uid) return await auth.getUser(uid);
+  if (email) return await auth.getUserByEmail(email);
+  throw new Error("uid_or_email_required");
+}
+
 /* === /api/me: ログイン中ユーザーの“真実”を返す（会社・氏名・権限） === */
 app.get("/api/me", verifyFirebaseToken, async (req, res) => {
   const uid = req.user?.uid;
@@ -524,6 +532,59 @@ app.get("/api/debug/stripe-key-check", verifyFirebaseToken, async (_req, res) =>
   }
 });
 
+/* ====================== Master: 顧客の無効化API ====================== */
+/**
+ * POST /api/master/customers/disable
+ * Body: { uid?: string, email?: string }
+ * 効果:
+ *  - Firebase Auth のユーザーを disabled=true にする
+ *  - 既存のリフレッシュトークンを失効（即座にセッション切断）
+ *  - （任意）Neon 側の app_users.active を false にする
+ */
+app.post("/api/master/customers/disable", verifyFirebaseToken, async (req, res) => {
+  try {
+    // まずは master ロールのみ許可（必要なら app_users 参照の厳格化もOK）
+    const role = req.user?.role || null;
+    if (role !== "master") {
+      return res.status(403).json({ error: "forbidden" });
+    }
+
+    const { uid, email } = req.body || {};
+    if (!uid && !email) {
+      return res.status(400).json({ error: "uid_or_email_required" });
+    }
+
+    // 対象ユーザー取得
+    const user = await getUserByUidOrEmail({ uid, email });
+
+    // すでに無効ならそのまま成功返しでもよい
+    if (user.disabled !== true) {
+      await admin.auth().updateUser(user.uid, { disabled: true });
+    }
+
+    // 既存セッション（リフレッシュトークン）を失効
+    await admin.auth().revokeRefreshTokens(user.uid);
+
+    // （任意）Neon 側を持っている場合は active=false で反映（無ければスキップ可）
+    try {
+      await pool.query(
+        `update app_users set active=false where uid=$1`,
+        [user.uid]
+      );
+    } catch (e) {
+      // app_users が無い環境では黙殺
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[disable] app_users update skipped:", e?.message);
+      }
+    }
+
+    return res.json({ ok: true, uid: user.uid, disabled: true });
+  } catch (e) {
+    console.error("POST /api/master/customers/disable", e);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+
 /* ====================== Drivers: 保存/取得 API ====================== */
 
 // 全ドライバー取得
@@ -579,7 +640,7 @@ app.post("/api/drivers/save", verifyFirebaseToken, async (req, res) => {
 });
 
 /* ====================== ヘルスチェック ====================== */
-app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, tag: "admin-check-v1" }));
 
 // 🔐 管理者Auth作成（会社固定 & 既定Authのセッションに影響させない）
 app.post("/api/admins/provision", verifyFirebaseToken, async (req, res) => {
@@ -685,7 +746,95 @@ app.post("/api/drivers/provision", verifyFirebaseToken, async (req, res) => {
   }
 });
 
-// ... 直前まで各種ルート定義 ...
+/* ====================== DEBUG: マスター権限付与（一時用） ====================== */
+/**
+ * POST /api/debug/grant-master
+ * Headers:
+ *   X-Grant-Secret: <.env の GRANT_MASTER_SECRET>
+ * Body (JSON):
+ *   { uid?: string, email?: string }
+ *
+ * 効果:
+ *   - 対象ユーザーの Custom Claims を { ...既存, role: "master" } に更新
+ *   - Refresh Tokens も失効（次回サインインで新トークンに反映）
+ *
+ * 注意:
+ *   使い終わったらこのルートは必ず削除 or コメントアウトしてください。
+ */
+app.post("/api/debug/grant-master", async (req, res) => {
+  try {
+    // ローカル or 内部用の簡易ガード（IDトークン不要、共有シークレットで制御）
+    const secret = req.headers["x-grant-secret"];
+    if (!secret || secret !== process.env.GRANT_MASTER_SECRET) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+
+    const { uid, email } = req.body || {};
+    if (!uid && !email) {
+      return res.status(400).json({ error: "uid_or_email_required" });
+    }
+
+    // 対象ユーザー取得
+    const user = await getUserByUidOrEmail({ uid, email });
+
+    // 既存クレームを温存しつつ role を master に
+    const existingClaims = (user.customClaims || {});
+    const nextClaims = { ...existingClaims, role: "master" };
+
+    await admin.auth().setCustomUserClaims(user.uid, nextClaims);
+    await admin.auth().revokeRefreshTokens(user.uid); // 既存セッションの更新を強制
+
+    // 結果返却（セキュリティのため最低限の情報のみ）
+    return res.json({
+      ok: true,
+      uid: user.uid,
+      email: user.email || null,
+      claims: nextClaims
+    });
+  } catch (e) {
+    console.error("POST /api/debug/grant-master", e);
+    return res.status(500).json({ error: "server_error", detail: e?.message });
+  }
+});
+
+// --- Admin SDK 動作チェック（一時） ---
+app.get("/api/debug/admin-check", async (_req, res) => {
+  try {
+    await admin.auth().listUsers(1); // 読めれば資格情報OK
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[admin-check]", e);
+    res.status(500).json({
+      error: "admin_error",
+      detail: e?.message,
+      code: e?.errorInfo?.code || e?.code || null
+    });
+  }
+});
+
+// --- Debug: 指定メールのユーザ取得だけ試す（listUsersを使わない） ---
+app.get("/api/debug/user-by-email", async (req, res) => {
+  try {
+    const email = String(req.query.email || "").trim();
+    if (!email) return res.status(400).json({ error: "email_required" });
+
+    const u = await admin.auth().getUserByEmail(email);
+    return res.json({
+      ok: true,
+      uid: u.uid,
+      email: u.email,
+      customClaims: u.customClaims || {},
+      disabled: !!u.disabled
+    });
+  } catch (e) {
+    console.error("[user-by-email]", e);
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || String(e),
+      code: e?.errorInfo?.code || e?.code || null
+    });
+  }
+});
 
 /* ====================== デバッグ: 環境変数チェック ====================== */
 app.get("/api/debug/env-check", verifyFirebaseToken, (_req, res) => {
@@ -721,8 +870,181 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: "internal_server_error" });
 });
 
+app.get("/api/debug/ping", (_req, res) => {
+  res.json({ ok: true, from: "this server.mjs" });
+});
+
 /* ====================== サーバ起動（最下部） ====================== */
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${PORT}`);
+});
+/* ====================== Master: 顧客 作成/削除/修復 API（追記） ====================== */
+app.post("/api/master/customers/provision", verifyFirebaseToken, async (req, res) => {
+  try {
+    if (req.user?.role !== "master") return res.status(403).json({ error: "forbidden" });
+    let { company, loginId, password } = req.body || {};
+    company  = String(company || "").trim();
+    loginId  = String(loginId || "").trim();
+    password = String(password || "");
+    if (!company || !loginId) return res.status(400).json({ error: "company/loginId required" });
+    if (!password || password.length < 8) { password = "Ab!" + Math.random().toString(36).slice(2, 10); }
+    const slug = String(company).replace(/[^a-z0-9]+/gi, "").toLowerCase() || "c";
+    const email = `${slug}.${loginId}@anborco.jp`;
+    try { await admin.auth().getUserByEmail(email); return res.status(409).json({ error: "email_already_exists" }); } catch {}
+    const user = await admin.auth().createUser({ email, password, emailVerified: false, disabled: false });
+    await admin.auth().setCustomUserClaims(user.uid, { company, role: "admin" });
+    await admin.auth().revokeRefreshTokens(user.uid);
+    return res.json({ ok:true, uid:user.uid, email, password });
+  } catch (e) {
+    console.error("POST /api/master/customers/provision", e);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+app.post("/api/master/customers/delete", verifyFirebaseToken, async (req, res) => {
+  try {
+    if (req.user?.role !== "master") return res.status(403).json({ error: "forbidden" });
+    const { uid, email } = req.body || {};
+    if (!uid && !email) return res.status(400).json({ error: "uid_or_email_required" });
+    const user = await getUserByUidOrEmail({ uid, email });
+    await admin.auth().deleteUser(user.uid);
+    try { await pool.query(`update app_users set active=false where uid=$1`, [user.uid]); } catch {}
+    return res.json({ ok:true, uid:user.uid, deleted:true });
+  } catch (e) {
+    console.error("POST /api/master/customers/delete", e);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+app.post("/api/master/customers/fix-claims", verifyFirebaseToken, async (req, res) => {
+  try {
+    if (req.user?.role !== "master") return res.status(403).json({ error: "forbidden" });
+    let { email, company, role } = req.body || {};
+    email   = String(email || "").trim();
+    company = String(company || "").trim();
+    role    = String(role || "admin");
+    if (!email || !company) return res.status(400).json({ error: "email/company required" });
+    const user = await getUserByUidOrEmail({ email });
+    const claims = { ...(user.customClaims || {}), company, role };
+    await admin.auth().setCustomUserClaims(user.uid, claims);
+    await admin.auth().revokeRefreshTokens(user.uid);
+    return res.json({ ok:true, uid:user.uid, email, claims });
+  } catch (e) {
+    console.error("POST /api/master/customers/fix-claims", e);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+
+/* ====================== Master v2: 顧客 作成/削除/修復 API（安全に追記可） ====================== */
+/**
+ * 依頼①: 「削除した顧客がログインできてしまう」→ 完全削除 + トークン失効 で解決
+ * 依頼②: 「会社未設定で登録作業が進められない」→ 作成時に company/role の custom claims を必ず付与
+ * 既存ルートと衝突しないよう "v2" パスにしています（追記しても安全）。
+ */
+
+app.post("/api/master/v2/customers/provision", verifyFirebaseToken, async (req, res) => {
+  try {
+    if (req.user?.role !== "master") return res.status(403).json({ error: "forbidden" });
+
+    let { company, loginId, password } = req.body || {};
+    company  = String(company || "").trim();
+    loginId  = String(loginId || "").trim();
+    password = String(password || "");
+
+    if (!company || !loginId) return res.status(400).json({ error: "company/loginId required" });
+    if (!password || password.length < 8) {
+      password = "Ab!" + Math.random().toString(36).slice(2, 10); // 最低限の強度
+    }
+
+    const slug = company.replace(/[^a-z0-9]+/gi, "").toLowerCase() || "c";
+    const email = `${slug}.${loginId}@anborco.jp`;
+
+    // 既存なら409
+    try {
+      await admin.auth().getUserByEmail(email);
+      return res.status(409).json({ error: "email_already_exists" });
+    } catch (_) {}
+
+    const user = await admin.auth().createUser({
+      email, password, emailVerified: false, disabled: false,
+    });
+
+    // ← ここが肝：会社と役割を必ず custom claims に付与（依頼②の根本対策）
+    await admin.auth().setCustomUserClaims(user.uid, { company, role: "admin" });
+    await admin.auth().revokeRefreshTokens(user.uid); // 次回トークンに反映
+
+    return res.json({ ok: true, uid: user.uid, email, password });
+  } catch (e) {
+    console.error("[v2 provision]", e);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+
+app.post("/api/master/v2/customers/delete", verifyFirebaseToken, async (req, res) => {
+  try {
+    if (req.user?.role !== "master") return res.status(403).json({ error: "forbidden" });
+
+    const { uid, email } = req.body || {};
+    if (!uid && !email) return res.status(400).json({ error: "uid_or_email_required" });
+
+    // uid or email から特定
+    const user = await (async () => {
+      if (uid) return await admin.auth().getUser(uid);
+      return await admin.auth().getUserByEmail(String(email).trim());
+    })();
+
+    // 完全削除（依頼①の根本対策）。無効化ではなく deleteUser でアカウント自体を消す
+    await admin.auth().deleteUser(user.uid);
+
+    // DB を持っていれば inactive に（無ければ黙殺）
+    try { await pool.query(`update app_users set active=false where uid=$1`, [user.uid]); } catch {}
+    return res.json({ ok: true, uid: user.uid, deleted: true });
+  } catch (e) {
+    console.error("[v2 delete]", e);
+    // すでに存在しないなら “成功扱い” にして良い（再ログイン不可という目的は満たしている）
+    if (e?.errorInfo?.code === "auth/user-not-found") {
+      return res.json({ ok: true, deleted: true, note: "already_deleted" });
+    }
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+
+app.post("/api/master/v2/customers/fix-claims", verifyFirebaseToken, async (req, res) => {
+  try {
+    if (req.user?.role !== "master") return res.status(403).json({ error: "forbidden" });
+
+    let { email, company, role } = req.body || {};
+    email   = String(email || "").trim();
+    company = String(company || "").trim();
+    role    = String(role || "admin").trim();
+    if (!email || !company) return res.status(400).json({ error: "email/company required" });
+
+    const u = await admin.auth().getUserByEmail(email);
+    const claims = { ...(u.customClaims || {}), company, role };
+    await admin.auth().setCustomUserClaims(u.uid, claims);
+    await admin.auth().revokeRefreshTokens(u.uid); // 次回ログインで反映
+
+    return res.json({ ok: true, uid: u.uid, email, claims });
+  } catch (e) {
+    console.error("[v2 fix-claims]", e);
+    if (e?.errorInfo?.code === "auth/user-not-found") {
+      return res.status(404).json({ error: "user_not_found" });
+    }
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+
+/* === optional: ローカル確認用（ユーザー存在チェック）=== */
+app.get("/api/debug/v2/user-by-email", async (req, res) => {
+  try {
+    const email = String(req.query.email || "").trim();
+    if (!email) return res.status(400).json({ error: "email_required" });
+    const u = await admin.auth().getUserByEmail(email);
+    return res.json({ ok: true, uid: u.uid, email: u.email, claims: u.customClaims || {}, disabled: !!u.disabled });
+  } catch (e) {
+    console.error("[debug v2 user-by-email]", e);
+    if (e?.errorInfo?.code === "auth/user-not-found") {
+      return res.status(404).json({ ok:false, error:"user_not_found" });
+    }
+    return res.status(500).json({ ok:false, error:"server_error" });
+  }
 });

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { getAuth } from "firebase/auth";
+import { apiURL } from "@/lib/apiBase";
 
 /** ========================= Types ========================= */
 type Attachment = {
@@ -29,25 +30,8 @@ type Project = {
   customFields?: Record<string, string>;
 };
 
-/** ========================= API helpers =========================
- *  .env（どちらか）:
- *   - Vite:           VITE_API_BASE_URL=https://api.example.com
- *   - Next.js (App):  NEXT_PUBLIC_API_BASE=https://api.example.com
- */
-const API_BASE: string =
-  (((typeof process !== "undefined" ? (process as any) : undefined)?.env?.NEXT_PUBLIC_API_BASE) as string) ||
-  (((typeof import.meta !== "undefined" ? (import.meta as any) : undefined)?.env?.VITE_API_BASE_URL) as string) ||
-  "";
-
-const joinURL = (base: string, path: string) => {
-  if (!base) return path;
-  const b = base.replace(/\/+$/, "");
-  const p = path.replace(/^\/+/, "");
-  return `${b}/${p}`;
-};
-
 async function apiJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = joinURL(API_BASE, path);
+  const url = apiURL(path);
   const res = await fetch(url, {
     credentials: "include",
     headers: { Accept: "application/json", ...(init?.headers || {}) },

@@ -1,25 +1,41 @@
-# --- dependencies / builds ---
+﻿# --- dependencies / builds ---
 node_modules/
 dist/
 build/
 .vercel/
 
-# --- env files (コミット禁止) ---
+# --- env files (繧ｳ繝溘ャ繝育ｦ∵ｭ｢) ---
 .env
 .env.*
-!.env.example   # サンプルだけは追跡OK
+!.env.example   # 繧ｵ繝ｳ繝励Ν縺縺代・霑ｽ霍｡OK
 
-# --- Firebase Admin キー（ローカル専用）---
+# --- Firebase Admin 繧ｭ繝ｼ・医Ο繝ｼ繧ｫ繝ｫ蟆ら畑・・--
 /anborco-app-firebase-adminsdk-*.json
 /server/firebase-admin.json
 /server/anborco-app-firebase-adminsdk-*.json
 /serviceAccount.json
 /server/serviceAccount.json
 
-# --- logs / OS noise（任意）---
+# --- logs / OS noise・井ｻｻ諢擾ｼ・--
 *.log
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
 .DS_Store
 Thumbs.db
+
+# secrets
+server/.env
+server/.env.local
+server/.env.*
+server/firebase-admin.json
+
+# deps & builds
+node_modules/
+dist/
+.vite/
+
+# misc
+*.zip
+.DS_Store
+

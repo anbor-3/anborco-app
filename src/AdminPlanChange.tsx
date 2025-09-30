@@ -4,13 +4,7 @@ import { getAuth } from "firebase/auth";
 import { Package, CheckCircle, Minus } from "lucide-react";
 import { PLAN_FEATURES, type PlanId } from "./features";
 import { useFeatures } from "./useCompanyPlan";
-
-/** ========= 共通 ========= */
-const API_BASE =
-  (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_API_BASE_URL)
-    ? String((process as any).env.NEXT_PUBLIC_API_BASE_URL).replace(/\/$/, "")
-    : "";
-const api = (p: string) => `${API_BASE}${p.startsWith("/") ? p : `/${p}`}`;
+import { apiURL } from "@/lib/apiBase";
 
 const PRICING: { id: PlanId; jp: string; en: string; price: number }[] = [
   { id: "basic",     jp: "ベーシック",     en: "Basic",     price:  9800 },
@@ -105,7 +99,7 @@ export default function AdminPlanChange() {
     try {
       const auth = getAuth();
       const idToken = await auth.currentUser?.getIdToken();
-      await fetch(api(endpoint), {
+      await fetch(apiURL(endpoint), {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken || ""}` },
