@@ -3,15 +3,8 @@ import NewCustomerModal from "../pages/NewCustomerModal";
 import type { Customer } from "../pages/NewCustomerModal"; // 型としてのみ import
 import { createCustomerWithAuth } from "../utils/createCustomerWithAuth";
 import Select from "react-select";
-
-/** ✅ 本番向け API 基点：NEXT_PUBLIC_API_BASE_URL があれば使う */
-const RAW_BASE =
-  (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_BASE_URL)
-    ? String((import.meta as any).env.VITE_API_BASE_URL)
-    : "";
-const API_BASE_URL = RAW_BASE.replace(/\/$/, "");
-const api = (path: string) => `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
-
+ // ★ 共通の API 基点ユーティリティに統一
+ import { apiURL } from "@/lib/apiBase";
 /** ✅ プラン定義（機能フラグ付き） */
 type PlanId = "basic" | "advanced" | "pro" | "elite" | "premium" | "unlimited";
 type FeatureKey = "chat" | "shift" | "dailyReport" | "vehicle";
@@ -59,7 +52,7 @@ const fetchUserCount = async (companyName: string) => {
 
   // まずはサーバ集計を利用（あるなら最優先）
   try {
-    const res = await fetch(api(`/api/company/stats?company=${encodeURIComponent(companyName)}`), {
+    const res = await fetch(apiURL(`/api/company/stats?company=${encodeURIComponent(companyName)}`), {
       credentials: "include",
       headers: { Accept: "application/json" },
     });
@@ -205,7 +198,7 @@ export default function CustomerTable() {
             const { getAuth } = await import("firebase/auth");
 const idToken = await getAuth().currentUser?.getIdToken();
 
-await fetch(api("/api/customers"), {
+await fetch(apiURL("/api/customers"), {
   method: "POST",
   credentials: "include",
   headers: {

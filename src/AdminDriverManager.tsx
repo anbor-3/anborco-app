@@ -2,17 +2,7 @@
 // ✅ import は一番上にまとめてください
 import { useState, useEffect } from "react";
 import { getAuth } from "firebase/auth";
-
-/** ✅ 本番向け API 基点（Next.js / Vite 双方対応 & 末尾スラッシュ除去） */
-const RAW_BASE: string =
-  // Next.js
-  (((typeof process !== "undefined" ? (process as any) : undefined)?.env?.NEXT_PUBLIC_API_BASE) as string) ||
-  // Vite
-  (((typeof import.meta !== "undefined" ? (import.meta as any) : undefined)?.env?.VITE_API_BASE_URL) as string) ||
-  "";
-const API_BASE_URL = RAW_BASE.replace(/\/$/, "");
-const api = (path: string) =>
-  `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+import { apiURL } from "@/lib/apiBase";
 
 const debounce = <T extends (...args: any[]) => any>(fn: T, delay = 500) => {
   let t: number | undefined;
@@ -47,7 +37,7 @@ const loadCompanyCaps = async (company: string): Promise<CompanyCaps> => {
   try {
     const auth = getAuth();
     const idToken = await auth.currentUser?.getIdToken();
-    const res = await fetch(api(`/api/company/config?company=${encodeURIComponent(company)}`), {
+    const res = await fetch(apiURL(`/api/company/config?company=${encodeURIComponent(company)}`), {
       headers: { Authorization: `Bearer ${idToken || ""}`, Accept: "application/json" },
       credentials: "include",
     });
@@ -72,7 +62,7 @@ const fetchCompanyStats = async (company: string): Promise<CompanyStats> => {
   try {
     const auth = getAuth();
     const idToken = await auth.currentUser?.getIdToken();
-    const res = await fetch(api(`/api/company/stats?company=${encodeURIComponent(company)}`), {
+    const res = await fetch(apiURL(`/api/company/stats?company=${encodeURIComponent(company)}`), {
       headers: { Authorization: `Bearer ${idToken||""}`, Accept: "application/json" },
       credentials: "include",
     });
@@ -128,7 +118,7 @@ const saveDriversLocal = (company: string, drivers: Driver[]) => {
 const provisionDriverAuth = async (company: string, loginId: string, password: string) => {
   const auth = getAuth();
   const idToken = await auth.currentUser?.getIdToken();
-  const res = await fetch(api("/api/drivers/provision"), {
+  const res = await fetch(apiURL("/api/drivers/provision"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -153,7 +143,7 @@ export const fetchDrivers = async (company: string): Promise<Driver[]> => {
     const idToken = await auth.currentUser?.getIdToken();
     if (!idToken) throw new Error("未ログイン");
 
-    const res = await fetch(api(`/api/drivers?company=${encodeURIComponent(company)}`), {
+    const res = await fetch(apiURL(`/api/drivers?company=${encodeURIComponent(company)}`), {
       headers: {
         Authorization: `Bearer ${idToken}`,
         Accept: "application/json",
@@ -194,7 +184,7 @@ const persist = async (company: string, drivers: Driver[], opts?: { silent?: boo
   }
 
   try {
-    const res = await fetch(api("/api/drivers/save"), {
+    const res = await fetch(apiURL("/api/drivers/save"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -300,7 +290,7 @@ const AdminDriverManager = () => {
     try {
       const auth = getAuth();
       const idToken = await auth.currentUser?.getIdToken();
-      await fetch(api("/api/billing/upgrade"), {
+      await fetch(apiURL("/api/billing/upgrade"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken||""}` },
         credentials: "include",

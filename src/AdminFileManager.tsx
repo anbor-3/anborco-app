@@ -8,21 +8,9 @@ import INV_PDF from "@/assets/請求書テンプレート.pdf?url";
 import ConfirmSendModal from "./components/ConfirmSendModal";
 import type { Driver } from "./AdminDriverManager";
 import { getAuth } from "firebase/auth";
+import { apiURL } from "@/lib/apiBase";
 import { auth, storage } from "./firebaseClient";
 import { ref, uploadString, getDownloadURL } from "firebase/storage";
-
-/* =================================================================================
-   ■ 本番向け API 基点（Next.js / Vite 両対応）
-================================================================================= */
-const RAW_BASE: string =
-  // Next.js
-  (((typeof process !== "undefined" ? (process as any) : undefined)?.env?.NEXT_PUBLIC_API_BASE) as string) ||
-  // Vite
-  (((typeof import.meta !== "undefined" ? (import.meta as any) : undefined)?.env?.VITE_API_BASE_URL) as string) ||
-  "";
-
-const API_BASE_URL = RAW_BASE.replace(/\/$/, "");
-const api = (path: string) => `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
 /** ヘッダーは常にプレーン連想配列に統一（型赤線対策） */
 type PlainHeaders = Record<string, string>;
@@ -32,7 +20,7 @@ async function apiJSON<T>(
   path: string,
   init?: Omit<RequestInit, "headers"> & { headers?: PlainHeaders }
 ): Promise<T> {
-  const res = await fetch(api(path), {
+  const res = await fetch(apiURL(path), {
     credentials: "include",
     ...init,
     headers: {
@@ -214,7 +202,7 @@ async function savePdfToStorageAndNeon(params: {
   const idToken = await auth.currentUser?.getIdToken?.();
   if (!idToken) throw new Error("未ログインです");
 
-  const r = await fetch(api("/api/pdfs/save"), {
+  const r = await fetch(apiURL("/api/pdfs/save"), {
     method: "POST",
     headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ company, driverId, type, fileName, url, createdAt: new Date().toISOString() }),
@@ -479,7 +467,7 @@ export default function AdminFileManager() {
       setZips(zipArr);
     }
   };
-  useEffect(() => { reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => { reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [company]);
 
   /* ---------------- テンプレアップロード（会社×種別で上書き・重複防止） ---------------- */
   const handleUpload = () => {
